@@ -6,7 +6,8 @@ import {
     ChevronLeft,
     ChevronRight,
     Menu,
-    Home
+    Home,
+    FileEdit
 } from 'lucide-react';
 
 const Sidebar = ({ activeTab, onTabChange }) => {
@@ -16,6 +17,7 @@ const Sidebar = ({ activeTab, onTabChange }) => {
         { label: 'Home', id: 'home', icon: Home },
         { label: 'Dashboard', id: 'dashboard', icon: LayoutDashboard },
         { label: 'Policies', id: 'policies', icon: FileText },
+        { label: 'Draft Management', id: 'draftManagement', icon: FileEdit },
         { label: 'Global Engagement', id: 'global', icon: Globe }
     ];
 

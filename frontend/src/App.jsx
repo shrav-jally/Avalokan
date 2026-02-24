@@ -11,6 +11,7 @@ import PoliciesList from './components/PoliciesList';
 import PolicyDetail from './components/PolicyDetail';
 import Home from './components/Home';
 import Login from './components/Login';
+import DraftManagement from './components/DraftManagement';
 
 // Configure Axios to always send credentials
 axios.defaults.withCredentials = true;
@@ -220,6 +221,10 @@ function App() {
                 </div>
               </div>
             </div>
+          )}
+
+          {activeTab === 'draftManagement' && (
+            <DraftManagement />
           )}
 
           {['reports', 'feedback', 'settings'].includes(activeTab) && (
