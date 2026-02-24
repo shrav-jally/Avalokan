@@ -1,0 +1,306 @@
+import React, { useState, useEffect } from 'react';
+import { Plus, Edit2, Trash2, X, Eye, EyeOff, Archive, CheckCircle } from 'lucide-react';
+import './DraftManagement.css';
+
+const DraftManagement = () => {
+  const [drafts, setDrafts] = useState([
+    {
+      id: 'D-2026-012',
+      title: 'Coastal Protection Regulation',
+      uploadDate: '2026-01-10',
+      startDate: '2026-01-15',
+      endDate: '2026-02-28',
+      file: null,
+      isManuallyClosed: false,
+    },
+    {
+      id: 'D-2026-011',
+      title: 'Electronic ID Standards',
+      uploadDate: '2025-12-05',
+      startDate: '2025-12-10',
+      endDate: '2026-01-10',
+      file: null,
+      isManuallyClosed: false,
+    }
+  ]);
+
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [currentDraft, setCurrentDraft] = useState(null);
+
+  const [formData, setFormData] = useState({
+    title: '',
+    startDate: '',
+    endDate: '',
+    file: null,
+  });
+
+  const [formError, setFormError] = useState('');
+
+  // Helpers
+  const getStatus = (draft) => {
+    if (draft.isManuallyClosed) return { label: 'Archived', class: 'status-archived' };
+    
+    const now = new Date();
+    const start = new Date(draft.startDate);
+    const end = new Date(draft.endDate);
+
+    // Ensure we are comparing dates correctly
+    end.setHours(23, 59, 59, 999);
+
+    if (now < start) {
+      return { label: 'Upcoming', class: 'status-upcoming' };
+    } else if (now >= start && now <= end) {
+      return { label: 'Active', class: 'status-active' };
+    } else {
+      return { label: 'Closed', class: 'status-closed' };
+    }
+  };
+
+  const handleOpenModal = (draft = null) => {
+    if (draft) {
+      setIsEditing(true);
+      setCurrentDraft(draft);
+      setFormData({
+        title: draft.title,
+        startDate: draft.startDate,
+        endDate: draft.endDate,
+        file: draft.file,
+      });
+    } else {
+      setIsEditing(false);
+      setCurrentDraft(null);
+      setFormData({
+        title: '',
+        startDate: '',
+        endDate: '',
+        file: null,
+      });
+    }
+    setFormError('');
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setFormError('');
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      if (file.type !== 'application/pdf') {
+        setFormError('Only PDF files are allowed.');
+        return;
+      }
+      setFormData({ ...formData, file });
+      setFormError('');
+    }
+  };
+
+  const handleSave = () => {
+    if (!formData.title || !formData.startDate || !formData.endDate) {
+      setFormError('Please fill in all required fields.');
+      return;
+    }
+
+    if (new Date(formData.endDate) < new Date(formData.startDate)) {
+      setFormError('End date cannot be before start date.');
+      return;
+    }
+
+    if (!isEditing && !formData.file) {
+      setFormError('Please upload a PDF file.');
+      return;
+    }
+
+    if (isEditing) {
+      setDrafts(drafts.map(d => 
+        d.id === currentDraft.id 
+          ? { ...d, title: formData.title, startDate: formData.startDate, endDate: formData.endDate, file: formData.file || d.file } 
+          : d
+      ));
+    } else {
+      const newDraft = {
+        id: `D-${new Date().getFullYear()}-00${drafts.length + 10}`,
+        title: formData.title,
+        uploadDate: new Date().toISOString().split('T')[0],
+        startDate: formData.startDate,
+        endDate: formData.endDate,
+        file: formData.file,
+        isManuallyClosed: false,
+      };
+      setDrafts([newDraft, ...drafts]);
+    }
+    handleCloseModal();
+  };
+
+  const toggleCloseConsultation = (id) => {
+    setDrafts(drafts.map(d => 
+      d.id === id ? { ...d, isManuallyClosed: !d.isManuallyClosed } : d
+    ));
+  };
+
+  const handleViewPdf = (file) => {
+    if (file && file instanceof Blob) {
+      const fileURL = URL.createObjectURL(file);
+      window.open(fileURL, "_blank");
+    } else {
+      alert("No local file uploaded. In a real app, this would fetch from backend.");
+    }
+  };
+
+  return (
+    <div className="draft-management">
+      <div className="page-header">
+        <div className="header-text">
+          <h2>Draft Management (Admin)</h2>
+          <p>Create, update, and manage public consultation drafts securely.</p>
+        </div>
+        <div className="header-actions">
+          <button className="btn-primary" onClick={() => handleOpenModal()}>
+            <Plus size={18} /> Add New Draft
+          </button>
+        </div>
+      </div>
+
+      <div className="panel-white">
+        <div className="table-responsive">
+          <table className="draft-table">
+            <thead>
+              <tr>
+                <th>Draft Title</th>
+                <th>Upload Date</th>
+                <th>Consultation Period</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {drafts.map(draft => {
+                const status = getStatus(draft);
+                return (
+                  <tr key={draft.id}>
+                    <td>
+                      <div className="draft-title">{draft.title}</div>
+                      <div className="draft-id">{draft.id}</div>
+                    </td>
+                    <td>{draft.uploadDate}</td>
+                    <td>
+                      {draft.startDate} <br /> 
+                      <small className="text-secondary">to</small> {draft.endDate}
+                    </td>
+                    <td>
+                      <span className={`status-badge ${status.class}`}>{status.label}</span>
+                    </td>
+                    <td>
+                      <div className="action-buttons">
+                        <button 
+                          className="btn-icon" 
+                          onClick={() => handleViewPdf(draft.file)}
+                          title="View PDF"
+                        >
+                          <Eye size={18} />
+                        </button>
+                        <button 
+                          className="btn-icon" 
+                          onClick={() => handleOpenModal(draft)}
+                          title="Edit Dates & Title"
+                        >
+                          <Edit2 size={18} />
+                        </button>
+                        <button 
+                          className={`btn-icon ${draft.isManuallyClosed ? 'text-success' : 'text-danger'}`} 
+                          onClick={() => toggleCloseConsultation(draft.id)}
+                          title={draft.isManuallyClosed ? "Reopen Consultation" : "Close Consultation"}
+                        >
+                          {draft.isManuallyClosed ? <CheckCircle size={18} /> : <Archive size={18} />}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {drafts.length === 0 && (
+                <tr>
+                  <td colSpan="5" className="empty-state">No drafts available. Click "Add New Draft" to create one.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {isModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h3>{isEditing ? 'Edit Draft Details' : 'Upload New Draft'}</h3>
+              <button className="btn-close" onClick={handleCloseModal}><X size={20} /></button>
+            </div>
+            <div className="modal-body">
+              {formError && <div className="error-banner">{formError}</div>}
+              
+              <div className="form-group">
+                <label>Document Title <span className="required">*</span></label>
+                <input 
+                  type="text" 
+                  className="form-control"
+                  value={formData.title} 
+                  onChange={(e) => setFormData({...formData, title: e.target.value})}
+                  placeholder="e.g. Health Protection Act"
+                />
+              </div>
+
+              <div className="form-group document-upload">
+                <label>PDF File <span className="required">{!isEditing && '*'}</span></label>
+                <input 
+                  type="file" 
+                  accept="application/pdf"
+                  className="form-control-file"
+                  onChange={handleFileChange}
+                />
+                {isEditing && !formData.file && currentDraft?.file === null && (
+                  <small className="file-notice">No file currently uploaded. You can attach one.</small>
+                )}
+                {formData.file && (
+                  <small className="file-selected">Selected: {formData.file.name}</small>
+                )}
+              </div>
+
+              <div className="form-row">
+                <div className="form-group half-width">
+                  <label>Consultation Start Date <span className="required">*</span></label>
+                  <input 
+                    type="date" 
+                    className="form-control"
+                    value={formData.startDate} 
+                    onChange={(e) => setFormData({...formData, startDate: e.target.value})}
+                  />
+                </div>
+                <div className="form-group half-width">
+                  <label>Consultation End Date <span className="required">*</span></label>
+                  <input 
+                    type="date" 
+                    className="form-control"
+                    value={formData.endDate} 
+                    onChange={(e) => setFormData({...formData, endDate: e.target.value})}
+                  />
+                </div>
+              </div>
+
+            </div>
+            <div className="modal-footer">
+              <button className="btn-secondary" onClick={handleCloseModal}>Cancel</button>
+              <button className="btn-primary" onClick={handleSave}>
+                {isEditing ? 'Save Changes' : 'Upload Draft'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default DraftManagement;

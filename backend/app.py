@@ -182,6 +182,33 @@ def get_policies():
     ]
     return jsonify(policies)
 
+@app.route('/api/analytics/compare-linked/<policy_id>', methods=['GET'])
+def compare_linked_policy(policy_id):
+    # Mock data showing sentiment trends for linked policies
+    mock_chains = {
+        "D-2026-012": [
+            {"id": "D-2024-005", "version": "v1.0", "positive": 1500, "neutral": 800, "negative": 1200},
+            {"id": "D-2025-089", "version": "v1.1", "positive": 1700, "neutral": 750, "negative": 1100},
+            {"id": "D-2026-012", "version": "v2.0", "positive": 2100, "neutral": 700, "negative": 800},
+        ],
+        "D-2026-010": [
+            {"id": "D-2023-100", "version": "v1.0", "positive": 1000, "neutral": 500, "negative": 900},
+            {"id": "D-2026-010", "version": "v1.2", "positive": 1200, "neutral": 857, "negative": 392},
+        ]
+    }
+    
+    chain = mock_chains.get(policy_id, [])
+    # If not in mock data, generate a generic mock chain so the chart always displays data
+    if not chain:
+        # Build a generic 3-iteration history showing sentiment improvement
+        chain = [
+            {"id": f"{policy_id}-v1", "version": "v1.0", "positive": 600, "neutral": 400, "negative": 1500},
+            {"id": f"{policy_id}-v1.5", "version": "v1.5", "positive": 1100, "neutral": 600, "negative": 900},
+            {"id": policy_id, "version": "v2.0", "positive": 2400, "neutral": 850, "negative": 300},
+        ]
+        
+    return jsonify({"policyId": policy_id, "chain": chain})
+
 if __name__ == '__main__':
     debug = os.getenv('FLASK_DEBUG', 'true').lower() in ('1', 'true', 'yes', 'on')
     host = os.getenv('FLASK_HOST', '127.0.0.1')

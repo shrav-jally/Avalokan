@@ -1,0 +1,379 @@
+.policy-detail-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    padding-bottom: 2rem;
+}
+
+.pd-back-btn {
+    align-self: flex-start;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.pd-back-btn:hover {
+    color: var(--text-primary);
+}
+
+.pd-header-card {
+    padding: 1.5rem;
+    border-radius: 8px;
+    background-color: white;
+    border: 1px solid var(--border-color);
+}
+
+.pd-meta {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.pd-id-badge {
+    background-color: #f1f3f5;
+    color: var(--text-secondary);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 0.875rem;
+}
+
+.pd-status-badge {
+    background-color: #e6fcf5;
+    color: #0ca678;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.pd-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: var(--text-primary);
+}
+
+.pd-summary {
+    font-size: 0.9375rem;
+    color: var(--text-secondary);
+    margin-bottom: 1.5rem;
+}
+
+.pd-actions {
+    display: flex;
+    gap: 1rem;
+}
+
+.pd-btn-secondary {
+    background-color: white;
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: all 0.2s;
+}
+
+.pd-btn-secondary:hover {
+    background-color: #f8f9fa;
+    border-color: #ced4da;
+}
+
+.pd-analytics-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+}
+
+.pd-card {
+    background-color: white;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.pd-card-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: 1.5rem;
+    color: var(--text-primary);
+}
+
+.pd-pie-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex: 1;
+}
+
+.pd-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.pd-tab {
+    background: none;
+    border: none;
+    font-size: 0.875rem;
+    font-weight: 500;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.pd-tab:hover {
+    background-color: #f1f3f5;
+    color: var(--text-primary);
+}
+
+.pd-tab.active-pos {
+    background-color: #e6fcf5;
+    color: #0ca678;
+}
+
+.pd-tab.active-neu {
+    background-color: #f1f3f5;
+    color: #495057;
+}
+
+.pd-tab.active-neg {
+    background-color: #fff5f5;
+    color: #e03131;
+}
+
+.pd-word-cloud-box {
+    flex: 1;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    border: 1px dashed var(--border-color);
+    padding: 1.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    min-height: 250px;
+}
+
+.pd-word {
+    /* Dynamic font size set inline */
+    line-height: 1;
+    animation: fadeIn 0.5s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: scale(0.9);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* Comments Section */
+.pd-comments-container {
+    background-color: white;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.pd-comments-header {
+    padding: 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.pd-comments-header h3 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.pd-comments-body {
+    height: 500px;
+    overflow-y: auto;
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.pd-comment-card {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 1rem;
+    background-color: #fdfdfd;
+}
+
+.pd-comment-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
+.pd-comment-user {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.pd-comment-id {
+    font-family: monospace;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    background: #f1f3f5;
+    padding: 0.125rem 0.375rem;
+    border-radius: 4px;
+}
+
+.pd-comment-sentiment {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+}
+
+.pd-comment-sentiment.positive {
+    background-color: #e6fcf5;
+    color: #0ca678;
+}
+
+.pd-comment-sentiment.neutral {
+    background-color: #f1f3f5;
+    color: #495057;
+}
+
+.pd-comment-sentiment.negative {
+    background-color: #fff5f5;
+    color: #e03131;
+}
+
+.pd-comment-text {
+    font-size: 0.875rem;
+    color: #495057;
+    line-height: 1.5;
+}
+
+.pd-comments-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #f8f9fa;
+}
+
+.pd-pagination-info {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.pd-pagination-controls {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.pd-page-btn {
+    background: white;
+    border: 1px solid var(--border-color);
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    cursor: pointer;
+    color: var(--text-primary);
+    transition: all 0.2s;
+}
+
+.pd-page-btn:hover:not(:disabled) {
+    background-color: #e7f5ff;
+    border-color: #74c0fc;
+    color: var(--primary-blue);
+}
+
+.pd-page-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background-color: #f1f3f5;
+}
+
+/* Modals */
+.pd-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1050;
+    backdrop-filter: blur(2px);
+}
+
+.pd-modal {
+    background: white;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 600px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.pd-modal h3 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+}
+
+.pd-modal-close {
+    align-self: flex-end;
+    margin-top: 1rem;
+    background-color: var(--primary-blue);
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+@media (max-width: 900px) {
+    .pd-analytics-grid {
+        grid-template-columns: 1fr;
+    }
+}
