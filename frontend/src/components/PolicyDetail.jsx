@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import axios from 'axios';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { FileText, Link, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { FileText, Link, ChevronLeft, ChevronRight, X, Search, AlertTriangle, Download } from 'lucide-react';
 import './PolicyDetail.css';
 import SentimentWordCloud from './SentimentWordCloud';
 import LinkedPoliciesModal from './LinkedPoliciesModal';
 
-// Mock Data Generators
+// Mock Data Generators for WordCloud/Charts
 const wordCloudData = {
     positive: [
         { text: "support", value: 32 },
@@ -36,61 +37,81 @@ const wordCloudData = {
     ]
 };
 
-const generateComments = () => {
-    const sentiments = ['positive', 'neutral', 'negative'];
-    const textSamples = {
-        positive: [
-            "Great initiative. I fully support these changes.",
-            "Very clear guidelines. Will help standardize our workflow.",
-            "Significant improvement over the previous iteration."
-        ],
-        neutral: [
-            "Need more details on section 4 implementation details.",
-            "When is the exact rollout date anticipated?",
-            "How will this policy affect small-to-medium businesses?"
-        ],
-        negative: [
-            "Too restrictive. This limits operational flexibility.",
-            "This will undoubtedly cause administrative delays.",
-            "I strongly disagree with the reporting burden this imposes."
-        ]
-    };
-
-    return Array.from({ length: 28 }, (_, i) => {
-        const s = sentiments[i % 3];
-        return {
-            id: `C-2026-${1000 + i}`,
-            user: `Stakeholder_${Math.floor(Math.random() * 9000) + 1000}`,
-            sentiment: s,
-            text: textSamples[s][Math.floor(Math.random() * textSamples[s].length)],
-            date: `2026-02-${String((i % 28) + 1).padStart(2, '0')}`
-        };
-    });
-};
-
-const MOCK_COMMENTS = generateComments();
-
-const sentimentDistribution = [
-    { name: 'Positive', value: 45 },
-    { name: 'Neutral', value: 35 },
-    { name: 'Negative', value: 20 }
-];
 const COLORS = ['#0ca678', '#495057', '#e03131'];
 
 const PolicyDetail = ({ policy, onBack }) => {
     const [activeTab, setActiveTab] = useState('positive');
+    
+    // Search & Filter state
+    const [comments, setComments] = useState([]);
+    const [loadingComments, setLoadingComments] = useState(false);
+    const [searchKeyword, setSearchKeyword] = useState('');
+    const [filterSentiment, setFilterSentiment] = useState('');
+    const [filterHighRisk, setFilterHighRisk] = useState(false);
+    
     const [currentPage, setCurrentPage] = useState(1);
     const commentsPerPage = 10;
 
     const [isPreviewOpen, setIsPreviewOpen] = useState(false);
     const [isLinkedPoliciesOpen, setIsLinkedPoliciesOpen] = useState(false);
 
+    useEffect(() => {
+        if (!policy) return;
+        const fetchComments = async () => {
+            setLoadingComments(true);
+            try {
+                const params = { policy_id: policy.id, limit: 1000 };
+                if (searchKeyword.trim()) params.keyword = searchKeyword.trim();
+                
+                if (filterHighRisk) {
+                    params.sentiment = 'NEGATIVE';
+                    params.is_toxic = 'true';
+                } else if (filterSentiment) {
+                    params.sentiment = filterSentiment;
+                }
+
+                const res = await axios.get('http://localhost:5000/api/comments/search', { params });
+                setComments(res.data.results || []);
+                setCurrentPage(1); // reset to first page on new search
+            } catch (err) {
+                console.error("Failed to fetch comments", err);
+            } finally {
+                setLoadingComments(false);
+            }
+        };
+
+        // debounce the search slightly
+        const timer = setTimeout(() => {
+            fetchComments();
+        }, 300);
+        return () => clearTimeout(timer);
+    }, [policy, searchKeyword, filterSentiment, filterHighRisk]);
+
     if (!policy) return null;
 
     // Pagination Logic
-    const totalPages = Math.ceil(MOCK_COMMENTS.length / commentsPerPage);
+    const derivedSentimentDistribution = useMemo(() => {
+        const counts = { POSITIVE: 0, NEUTRAL: 0, NEGATIVE: 0 };
+        comments.forEach(c => {
+            const s = c.sentiment?.toUpperCase();
+            if (counts[s] !== undefined) counts[s]++;
+        });
+        const total = comments.length;
+        if (total === 0) return [
+            { name: 'Positive', value: 0 },
+            { name: 'Neutral', value: 0 },
+            { name: 'Negative', value: 0 }
+        ];
+        return [
+            { name: 'Positive', value: Math.round((counts.POSITIVE / total) * 100) },
+            { name: 'Neutral', value: Math.round((counts.NEUTRAL / total) * 100) },
+            { name: 'Negative', value: Math.round((counts.NEGATIVE / total) * 100) }
+        ];
+    }, [comments]);
+
+    const totalPages = Math.ceil(comments.length / commentsPerPage);
     const startIndex = (currentPage - 1) * commentsPerPage;
-    const currentComments = MOCK_COMMENTS.slice(startIndex, startIndex + commentsPerPage);
+    const currentComments = comments.slice(startIndex, startIndex + commentsPerPage);
 
     const handleNextPage = () => {
         if (currentPage < totalPages) setCurrentPage(currentPage + 1);
@@ -101,6 +122,11 @@ const PolicyDetail = ({ policy, onBack }) => {
     };
 
     const currentWords = wordCloudData[activeTab];
+
+    const handleExportPdf = () => {
+        // Trigger download of generated PDF
+        window.open(`http://localhost:5000/api/reports/generate/${policy.id}`, '_blank');
+    };
 
     return (
         <div className="policy-detail-layout">
@@ -119,6 +145,9 @@ const PolicyDetail = ({ policy, onBack }) => {
                 <p className="pd-summary">{policy.summary}</p>
 
                 <div className="pd-actions">
+                    <button className="pd-btn-secondary" onClick={handleExportPdf}>
+                        <Download size={16} /> Export PDF Report
+                    </button>
                     <button className="pd-btn-secondary" onClick={() => setIsPreviewOpen(true)}>
                         <FileText size={16} /> Preview Document
                     </button>
@@ -137,7 +166,7 @@ const PolicyDetail = ({ policy, onBack }) => {
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
                                 <Pie
-                                    data={sentimentDistribution}
+                                    data={derivedSentimentDistribution}
                                     cx="50%"
                                     cy="50%"
                                     innerRadius={60}
@@ -147,7 +176,7 @@ const PolicyDetail = ({ policy, onBack }) => {
                                     dataKey="value"
                                     label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
                                 >
-                                    {sentimentDistribution.map((entry, index) => (
+                                    {derivedSentimentDistribution.map((entry, index) => (
                                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                                     ))}
                                 </Pie>
@@ -188,35 +217,88 @@ const PolicyDetail = ({ policy, onBack }) => {
                 </div>
             </div>
 
-            {/* 3. Internal Comment Pagination */}
+            {/* 3. Searchable Comment Explorer */}
             <div className="pd-comments-container">
                 <div className="pd-comments-header">
-                    <h3>Stakeholder Comments</h3>
-                    <span className="pd-pagination-info">Total: {MOCK_COMMENTS.length}</span>
+                    <h3>Searchable Comment Explorer</h3>
+                    <span className="pd-pagination-info">Returns: {comments.length}</span>
+                </div>
+                
+                {/* Filters Row */}
+                <div className="pd-filters-bar" style={{ display: 'flex', gap: '1rem', padding: '1rem', borderBottom: '1px solid #dee2e6', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <div className="pd-search-box" style={{ flex: '1', display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #ccc', borderRadius: '4px', padding: '4px 8px' }}>
+                        <Search size={16} color="#adb5bd" style={{ marginRight: '8px' }} />
+                        <input 
+                            type="text" 
+                            placeholder="Enter keyword or phrase to search..." 
+                            style={{ border: 'none', outline: 'none', width: '100%', padding: '4px' }}
+                            value={searchKeyword}
+                            onChange={(e) => setSearchKeyword(e.target.value)}
+                        />
+                    </div>
+                    
+                    <select 
+                        className="pd-select" 
+                        value={filterSentiment}
+                        onChange={(e) => {
+                            setFilterSentiment(e.target.value);
+                            setFilterHighRisk(false); // Reset high risk if changing sentiment manually
+                        }}
+                        style={{ padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+                    >
+                        <option value="">All Sentiments</option>
+                        <option value="POSITIVE">Positive</option>
+                        <option value="NEUTRAL">Neutral</option>
+                        <option value="NEGATIVE">Negative</option>
+                    </select>
+
+                    <button 
+                        className={`pd-btn-high-risk ${filterHighRisk ? 'active' : ''}`}
+                        onClick={() => {
+                            setFilterHighRisk(!filterHighRisk);
+                            if (!filterHighRisk) setFilterSentiment('');
+                        }}
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px', border: filterHighRisk ? '1px solid #e03131' : '1px solid #ccc', background: filterHighRisk ? '#fff5f5' : '#fff', color: filterHighRisk ? '#e03131' : '#495057', borderRadius: '4px', cursor: 'pointer', fontWeight: '500' }}
+                    >
+                        <AlertTriangle size={16} /> High Risk (Toxic/Negative)
+                    </button>
                 </div>
 
                 <div className="pd-comments-body">
-                    {currentComments.map(comment => (
-                        <div key={comment.id} className="pd-comment-card">
-                            <div className="pd-comment-meta">
-                                <div className="pd-comment-user">
-                                    <span className="pd-comment-id">{comment.id}</span>
-                                    {comment.user}
+                    {loadingComments ? (
+                        <div style={{ padding: '2rem', textAlign: 'center', color: '#6c757d' }}>Loading comments...</div>
+                    ) : currentComments.length === 0 ? (
+                        <div style={{ padding: '2rem', textAlign: 'center', color: '#6c757d' }}>No comments match your search criteria.</div>
+                    ) : (
+                        currentComments.map(comment => (
+                            <div key={comment.comment_id} className="pd-comment-card" style={{ borderLeft: comment.is_toxic ? '4px solid #e03131' : '4px solid transparent' }}>
+                                <div className="pd-comment-meta">
+                                    <div className="pd-comment-user">
+                                        <span className="pd-comment-id">{comment.comment_id.substring(0, 8)}...</span>
+                                        {/* Fallback to draft_id or arbitrary text if mock user not available */}
+                                        <span style={{color: '#868e96', fontSize: '0.8rem', marginLeft: '8px'}}>(Draft: {comment.draft_id})</span>
+                                        {comment.is_toxic && <span style={{ color: '#e03131', fontSize: '0.75rem', fontWeight: 'bold', marginLeft: '8px' }}>[FLAGGED TOXIC]</span>}
+                                    </div>
+                                    <span className={`pd-comment-sentiment ${comment.sentiment.toLowerCase()}`}>
+                                        {comment.sentiment}
+                                    </span>
                                 </div>
-                                <span className={`pd-comment-sentiment ${comment.sentiment}`}>
-                                    {comment.sentiment}
-                                </span>
+                                <div className="pd-comment-text">
+                                    "{comment.text}"
+                                </div>
+                                {comment.summary && comment.summary !== comment.text && (
+                                    <div className="pd-comment-summary" style={{ marginTop: '8px', padding: '8px', background: '#f8f9fa', borderRadius: '4px', fontSize: '0.85rem', color: '#495057', fontStyle: 'italic' }}>
+                                        <strong>AI Summary:</strong> {comment.summary}
+                                    </div>
+                                )}
                             </div>
-                            <div className="pd-comment-text">
-                                "{comment.text}"
-                            </div>
-                        </div>
-                    ))}
+                        ))
+                    )}
                 </div>
 
                 <div className="pd-comments-footer">
                     <span className="pd-pagination-info">
-                        Showing {startIndex + 1} - {Math.min(startIndex + commentsPerPage, MOCK_COMMENTS.length)} of {MOCK_COMMENTS.length}
+                        Showing {startIndex + (currentComments.length > 0 ? 1 : 0)} - {startIndex + currentComments.length} of {comments.length}
                     </span>
                     <div className="pd-pagination-controls">
                         <button
@@ -228,7 +310,7 @@ const PolicyDetail = ({ policy, onBack }) => {
                         </button>
                         <button
                             className="pd-page-btn"
-                            disabled={currentPage === totalPages}
+                            disabled={currentPage === totalPages || totalPages === 0}
                             onClick={handleNextPage}
                         >
                             Next

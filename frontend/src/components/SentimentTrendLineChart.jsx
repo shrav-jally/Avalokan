@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
 import {
     LineChart,
     Line,
@@ -10,26 +11,63 @@ import {
     Legend
 } from 'recharts';
 
-const SentimentTrendLineChart = ({ data, loading }) => {
-    if (loading) return <div className="chart-loading-placeholder"><p>Loading Sentiment Trends...</p></div>;
-    if (!data || data.length === 0) return null;
+const SentimentTrendLineChart = ({ data: initialData, policyId, loading: externalLoading }) => {
+    const [fetchedData, setFetchedData] = useState([]);
+    const [localLoading, setLocalLoading] = useState(false);
+    const [error, setError] = useState(null);
 
-    // Sorting: Newest released (highest release_order) leftmost, oldest right
-    const sortedData = [...data].sort((a, b) => b.release_order - a.release_order);
+    useEffect(() => {
+        if (!policyId) return;
+        const fetchData = async () => {
+            try {
+                setLocalLoading(true);
+                const res = await axios.get(`http://localhost:5000/api/analytics/trend/${policyId}`);
+                setFetchedData(res.data.chain || []);
+                setError(null);
+            } catch (err) {
+                console.error("Error fetching trend data", err);
+                setError("Failed to load trend data.");
+            } finally {
+                setLocalLoading(false);
+            }
+        };
+        fetchData();
+    }, [policyId]);
 
-    // Each draft point will have positive, negative, and neutral counts
-    const chartData = sortedData.map(d => ({
-        name: d.draft_title,
-        Positive: d.positive_count,
-        Negative: d.negative_count,
-        Neutral: d.neutral_count,
-    }));
+    const activeData = policyId ? fetchedData : initialData;
+    const isLoading = policyId ? localLoading : externalLoading;
 
-    const chartMinWidth = Math.max(1200, chartData.length * 150);
+    if (isLoading) return <div className="chart-loading-placeholder"><p>Loading Sentiment Trends...</p></div>;
+    if (error) return <div className="error-banner">{error}</div>;
+    if (!activeData || activeData.length === 0) return null;
+
+    // Adapt the X-axis mapping depending on data structure
+    // If global, we use sorted data and 'draft_title'. If policy-specific, we use chronological 'version'.
+    const isGlobal = !policyId;
+    let chartData = [];
+
+    if (isGlobal) {
+        const sortedData = [...activeData].sort((a, b) => b.release_order - a.release_order);
+        chartData = sortedData.map(d => ({
+            name: d.draft_title,
+            positive: d.positive_count,
+            negative: d.negative_count,
+            neutral: d.neutral_count,
+        }));
+    } else {
+        chartData = activeData.map(d => ({
+            name: d.version,
+            positive: d.positive,
+            negative: d.negative,
+            neutral: d.neutral,
+        }));
+    }
+
+    const chartMinWidth = Math.max(800, chartData.length * 150);
 
     return (
         <div className="trend-line-container">
-            <h3 className="section-title">Draft-wise Sentiment Trends (Newest to Oldest)</h3>
+            <h3 className="section-title">{isGlobal ? "Draft-wise Sentiment Trends (Newest to Oldest)" : "Sentiment Trend Across Versions"}</h3>
             <div className="horizontal-scroll-wrapper">
                 <div style={{ minWidth: `${chartMinWidth}px`, height: '300px' }}>
                     <ResponsiveContainer width="100%" height="100%">
@@ -63,7 +101,7 @@ const SentimentTrendLineChart = ({ data, loading }) => {
                             />
                             <Line
                                 type="monotone"
-                                dataKey="Positive"
+                                dataKey="positive"
                                 stroke="var(--sentiment-pos)"
                                 strokeWidth={2}
                                 dot={{ r: 4 }}
@@ -71,7 +109,7 @@ const SentimentTrendLineChart = ({ data, loading }) => {
                             />
                             <Line
                                 type="monotone"
-                                dataKey="Negative"
+                                dataKey="negative"
                                 stroke="var(--sentiment-neg)"
                                 strokeWidth={2}
                                 dot={{ r: 4 }}
@@ -79,7 +117,7 @@ const SentimentTrendLineChart = ({ data, loading }) => {
                             />
                             <Line
                                 type="monotone"
-                                dataKey="Neutral"
+                                dataKey="neutral"
                                 stroke="var(--sentiment-neu)"
                                 strokeWidth={2}
                                 dot={{ r: 4 }}

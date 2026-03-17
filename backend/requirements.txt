@@ -2,3 +2,11 @@ Flask>=3.0.0
 flask-cors>=4.0.0
 Authlib>=1.3.0
 python-dotenv>=1.0.0
+torch
+transformers
+tf-keras
+pymongo
+pydantic
+reportlab
+matplotlib
+faker

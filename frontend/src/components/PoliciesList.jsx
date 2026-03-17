@@ -1,28 +1,28 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
 
 const PoliciesList = ({ onSelectPolicy }) => {
-    const policies = [
-        {
-            id: 'p1',
-            title: 'Digital Personal Data Protection Bill 2026',
-            summary: 'Framework for processing digital personal data, recognizing the rights of individuals and duties of data fiduciaries.',
-        },
-        {
-            id: 'p2',
-            title: 'National AI Safety Regulation Framework',
-            summary: 'Guidelines for ethical AI development, focusing on transparency, accountability, and risk mitigation in public sector usage.',
-        },
-        {
-            id: 'p3',
-            title: 'Green Energy Transition Policy Draft',
-            summary: 'Strategic roadmap to achieve 50% renewable energy capacity by 2030, including incentives for solar and wind adoption.',
-        },
-        {
-            id: 'p4',
-            title: 'Urban Mobility & Public Transport Reform',
-            summary: 'Comprehensive plan to overhaul metropolitan transit systems, emphasizing electric buses and last-mile connectivity.',
-        }
-    ];
+    const [policies, setPolicies] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    useEffect(() => {
+        const fetchPolicies = async () => {
+            try {
+                setLoading(true);
+                const res = await axios.get('http://localhost:5000/api/policies');
+                setPolicies(res.data);
+                setError(null);
+            } catch (err) {
+                console.error('Error fetching policies:', err);
+                setError('Failed to load policies. Please try again later.');
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchPolicies();
+    }, []);
 
     return (
         <div className="policies-view">
@@ -34,7 +34,12 @@ const PoliciesList = ({ onSelectPolicy }) => {
             </div>
 
             <div className="policies-list">
-                {policies.map((policy) => (
+                {loading && <div className="loading-state">Loading policies...</div>}
+                {error && <div className="error-banner">{error}</div>}
+                {!loading && !error && policies.length === 0 && (
+                    <div className="empty-state">No policies found.</div>
+                )}
+                {!loading && !error && policies.map((policy) => (
                     <div
                         key={policy.id}
                         className="policy-item"

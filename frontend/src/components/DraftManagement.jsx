@@ -1,28 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, X, Eye, EyeOff, Archive, CheckCircle } from 'lucide-react';
 import './DraftManagement.css';
+import axios from 'axios';
 
 const DraftManagement = () => {
-  const [drafts, setDrafts] = useState([
-    {
-      id: 'D-2026-012',
-      title: 'Coastal Protection Regulation',
-      uploadDate: '2026-01-10',
-      startDate: '2026-01-15',
-      endDate: '2026-02-28',
-      file: null,
-      isManuallyClosed: false,
-    },
-    {
-      id: 'D-2026-011',
-      title: 'Electronic ID Standards',
-      uploadDate: '2025-12-05',
-      startDate: '2025-12-10',
-      endDate: '2026-01-10',
-      file: null,
-      isManuallyClosed: false,
+  const [drafts, setDrafts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    fetchDrafts();
+  }, []);
+
+  const fetchDrafts = async () => {
+    try {
+      setLoading(true);
+      const res = await axios.get('http://localhost:5000/api/drafts');
+      setDrafts(res.data);
+      setLoading(false);
+    } catch (err) {
+      console.error('Error fetching drafts:', err);
+      setError('Failed to fetch drafts.');
+      setLoading(false);
     }
-  ]);
+  };
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -135,6 +136,47 @@ const DraftManagement = () => {
     handleCloseModal();
   };
 
+  const handleCsvUpload = (e, draftId) => {
+    const file = e.target.files[0];
+    if (file && file.type === "text/csv") {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const text = event.target.result;
+        // Basic CSV parsing
+        const lines = text.split('\n').filter(line => line.trim() !== '');
+        if (lines.length < 2) {
+          alert("CSV is empty or missing data rows.");
+          return;
+        }
+        
+        // Assume simple CSV or just treating every non-header line as a comment
+        const comments = lines.slice(1).map(line => ({
+          draft_id: draftId,
+          text: line.replace(/^"|"$/g, '')
+        }));
+        
+        try {
+          alert(`Uploading ${comments.length} comments for bulk analysis... This might take a moment.`);
+          const res = await fetch('http://localhost:5000/api/analyze/bulk', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ comments })
+          });
+          const data = await res.json();
+          alert(`Success! Analyzed and inserted ${data.inserted_count} comments.`);
+        } catch (err) {
+          console.error(err);
+          alert('Error uploading comments for bulk analysis.');
+        }
+      };
+      reader.readAsText(file);
+    } else {
+      alert("Please upload a valid CSV file.");
+    }
+    // reset input
+    e.target.value = null;
+  };
+
   const toggleCloseConsultation = (id) => {
     setDrafts(drafts.map(d => 
       d.id === id ? { ...d, isManuallyClosed: !d.isManuallyClosed } : d
@@ -195,6 +237,10 @@ const DraftManagement = () => {
                     </td>
                     <td>
                       <div className="action-buttons">
+                        <label className="btn-icon csv-upload-btn" title="Upload Comments CSV">
+                          <input type="file" accept=".csv" style={{display: 'none'}} onChange={(e) => handleCsvUpload(e, draft.id)} />
+                          <Plus size={18} />
+                        </label>
                         <button 
                           className="btn-icon" 
                           onClick={() => handleViewPdf(draft.file)}

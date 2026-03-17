@@ -83,7 +83,7 @@ function App() {
 
         setMetrics(MOCK_METRICS);
         setGlobalData(MOCK_GLOBAL_DATA);
-        setError('Backend unavailable. Showing demo data.');
+        setError('Backend unavailable: ' + (err.response?.data?.message || err.message));
       } finally {
         setLoading(false);
       }
