@@ -1,14 +1,22 @@
+import os
+try:
+    from dotenv import load_dotenv
+    # Load environment variables from backend/.env when present at the earliest point.
+    env_path = os.path.join(os.path.dirname(__file__), '.env')
+    load_dotenv(dotenv_path=env_path)
+except Exception:  # pragma: no cover
+    load_dotenv = None
+
 from flask import Flask, jsonify, session, url_for, redirect, request
 from flask_cors import CORS
 from authlib.integrations.flask_client import OAuth
 from functools import wraps
-import os
-
-try:
-    from dotenv import load_dotenv
-except Exception:  # pragma: no cover
-    load_dotenv = None
-
+import uuid
+from datetime import datetime, timezone, timedelta
+from database import policies_col, drafts_col, comments_col
+from ai_engine import process_comment
+from report_generator import generate_draft_report
+from flask import send_file
 
 def _parse_csv_env(var_name: str, default: list[str]) -> list[str]:
     raw = os.getenv(var_name)
@@ -16,12 +24,6 @@ def _parse_csv_env(var_name: str, default: list[str]) -> list[str]:
         return default
     parts = [p.strip() for p in raw.split(',')]
     return [p for p in parts if p]
-
-
-if load_dotenv is not None:
-    # Load environment variables from backend/.env when present.
-    env_path = os.path.join(os.path.dirname(__file__), '.env')
-    load_dotenv(dotenv_path=env_path)
 
 app = Flask(__name__)
 
@@ -120,67 +122,105 @@ def auth_status():
     return jsonify({'isAuthenticated': False, 'role': 'guest'})
 
 
-@app.route('/api/dashboard/metrics', methods=['GET'])
-@admin_required
+@app.route("/api/dashboard/metrics", methods=["GET"])
 def get_metrics():
-    # Mock data for government e-consultation analytics
+    total_drafts = drafts_col.count_documents({})
+    total_comments = comments_col.count_documents({})
+    active_consultations = drafts_col.count_documents({"status": "open"})
+    
+    aggr = list(comments_col.aggregate([{"$group": {"_id": "$sentiment", "count": {"$sum": 1}}}]))
+    
+    pos = 0; neu = 0; neg = 0
+    for a in aggr:
+        if a.get("_id") == "POSITIVE": pos = a["count"]
+        elif a.get("_id") == "NEUTRAL": neu = a["count"]
+        elif a.get("_id") == "NEGATIVE": neg = a["count"]
+        
+    total_sent = pos + neu + neg
+    if total_sent > 0:
+        pos_pct = round((pos / total_sent) * 100)
+        neu_pct = round((neu / total_sent) * 100)
+        neg_pct = round((neg / total_sent) * 100)
+    else: pos_pct = neu_pct = neg_pct = 0
+    
     data = {
-        "totalDrafts": 142,
-        "totalComments": 8540,
-        "activeConsultations": 24,
-        "sentimentDistribution": {
-            "positive": 45,
-            "neutral": 35,
-            "negative": 20
-        }
+        "totalDrafts": total_drafts,
+        "totalComments": total_comments,
+        "activeConsultations": active_consultations,
+        "sentimentDistribution": {"positive": pos_pct, "neutral": neu_pct, "negative": neg_pct}
     }
     return jsonify(data)
 
 @app.route('/api/dashboard/detailed-metrics', methods=['GET'])
 def get_detailed_metrics():
-    # Mock data for draft-wise engagement
-    drafts = [
-        {"id": "D-2026-001", "title": "Public Health Bill v1.2", "comments": 2450, "sentiment": {"pos": 1200, "neu": 850, "neg": 400}},
-        {"id": "D-2026-002", "title": "Urban Transport Policy", "comments": 1820, "sentiment": {"pos": 600, "neu": 920, "neg": 300}},
-        {"id": "D-2026-003", "title": "Data Privacy Framework", "comments": 3100, "sentiment": {"pos": 1100, "neu": 700, "neg": 1300}},
-        {"id": "D-2026-004", "title": "Green Energy Initiative", "comments": 950, "sentiment": {"pos": 700, "neu": 200, "neg": 50}},
-        {"id": "D-2026-005", "title": "Education Reform Act", "comments": 1560, "sentiment": {"pos": 800, "neu": 460, "neg": 300}},
-        {"id": "D-2026-006", "title": "Cyber Security Guidelines", "comments": 2100, "sentiment": {"pos": 900, "neu": 800, "neg": 400}},
-        {"id": "D-2026-007", "title": "Fisheries Management", "comments": 450, "sentiment": {"pos": 200, "neu": 150, "neg": 100}},
+    # Fetch real drafts and aggregate their sentiment counts
+    pipeline = [
+        {"$group": {
+            "_id": "$draft_id",
+            "comments": {"$sum": 1},
+            "pos": { "$sum": { "$cond": [ {"$eq": ["$sentiment", "POSITIVE"]}, 1, 0 ] } },
+            "neu": { "$sum": { "$cond": [ {"$eq": ["$sentiment", "NEUTRAL"]}, 1, 0 ] } },
+            "neg": { "$sum": { "$cond": [ {"$eq": ["$sentiment", "NEGATIVE"]}, 1, 0 ] } }
+        }},
+        {"$lookup": {
+            "from": "drafts",
+            "localField": "_id",
+            "foreignField": "draft_id",
+            "as": "draft_info"
+        }},
+        { "$unwind": { "path": "$draft_info", "preserveNullAndEmptyArrays": True } },
+        { "$limit": 3 }
     ]
-    return jsonify(drafts)
+    aggr = list(comments_col.aggregate(pipeline))
+    results = []
+    for doc in aggr:
+        info = doc.get("draft_info", {})
+        results.append({
+            "id": doc["_id"],
+            "title": info.get("title", doc["_id"]),
+            "comments": doc["comments"],
+            "sentiment": {
+                "pos": doc["pos"],
+                "neu": doc["neu"],
+                "neg": doc["neg"]
+            }
+        })
+    return jsonify(results)
 
-@app.route('/api/global/draft-comment-volume', methods=['GET'])
+@app.route("/api/global/draft-comment-volume", methods=["GET"])
 def get_global_draft_comment_volume():
-    # Expanded dataset for scrollable charts and sorting demonstration
-    # release_order: higher means newer
-    data = [
-        {"draft_id": "D-2026-012", "draft_title": "Coastal Protection Regulation", "total_comments": 4200, "positive_count": 1512, "neutral_count": 714, "negative_count": 2016, "release_order": 12}, # 36%, 17%, 48%
-        {"draft_id": "D-2026-011", "draft_title": "Electronic ID Standards", "total_comments": 1200, "positive_count": 804, "neutral_count": 300, "negative_count": 96, "release_order": 11}, # 67%, 25%, 8%
-        {"draft_id": "D-2026-010", "draft_title": "Public Health Bill v1.2", "total_comments": 2450, "positive_count": 1200, "neutral_count": 857, "negative_count": 392, "release_order": 10}, # 49%, 35%, 16%
-        {"draft_id": "D-2026-009", "draft_title": "Urban Transport Policy", "total_comments": 1820, "positive_count": 600, "neutral_count": 928, "negative_count": 291, "release_order": 9}, # 33%, 51%, 16%
-        {"draft_id": "D-2026-008", "draft_title": "Data Privacy Framework", "total_comments": 3100, "positive_count": 1085, "neutral_count": 713, "negative_count": 1302, "release_order": 8}, # 35%, 23%, 42%
-        {"draft_id": "D-2026-007", "draft_title": "Green Energy Initiative", "total_comments": 950, "positive_count": 703, "neutral_count": 200, "negative_count": 47, "release_order": 7}, # 74%, 21%, 5%
-        {"draft_id": "D-2026-006", "draft_title": "Education Reform Act", "total_comments": 1560, "positive_count": 795, "neutral_count": 452, "negative_count": 296, "release_order": 6}, # 51%, 29%, 19%
-        {"draft_id": "D-2026-005", "draft_title": "Mining Safety Protocol", "total_comments": 600, "positive_count": 198, "neutral_count": 102, "negative_count": 300, "release_order": 5}, # 33%, 17%, 50%
-        {"draft_id": "D-2026-004", "draft_title": "Telecomm Infrastructure", "total_comments": 2100, "positive_count": 1407, "neutral_count": 504, "negative_count": 210, "release_order": 4}, # 67%, 24%, 10%
-        {"draft_id": "D-2026-003", "draft_title": "Aviation Noise Policy", "total_comments": 2800, "positive_count": 504, "neutral_count": 504, "negative_count": 1792, "release_order": 3}, # 18%, 18%, 64%
-        {"draft_id": "D-2026-002", "draft_title": "Waste Management Plan", "total_comments": 1300, "positive_count": 897, "neutral_count": 299, "negative_count": 104, "release_order": 2}, # 69%, 23%, 8%
-        {"draft_id": "D-2026-001", "draft_title": "Initial Agriculture Reform", "total_comments": 3500, "positive_count": 1190, "neutral_count": 490, "negative_count": 1785, "release_order": 1}, # 34%, 14%, 51%
+    pipeline = [
+        {"$group": {"_id": "$draft_id", "total_comments": {"$sum": 1}, "positive_count": { "$sum": { "$cond": [ {"$eq": ["$sentiment", "POSITIVE"]}, 1, 0 ] } }, "neutral_count": { "$sum": { "$cond": [ {"$eq": ["$sentiment", "NEUTRAL"]}, 1, 0 ] } }, "negative_count": { "$sum": { "$cond": [ {"$eq": ["$sentiment", "NEGATIVE"]}, 1, 0 ] } }}},
+        {"$lookup": {"from": "drafts", "localField": "_id", "foreignField": "draft_id", "as": "draft_info"}},
+        { "$unwind": { "path": "$draft_info", "preserveNullAndEmptyArrays": True } },
+        { "$sort": { "draft_info.published_date": -1, "_id": -1 } }
     ]
+    aggr = list(comments_col.aggregate(pipeline))
+    data = []
+    for idx, doc in enumerate(aggr):
+        draft_info = doc.get("draft_info", {})
+        data.append({
+            "draft_id": doc["_id"],
+            "draft_title": draft_info.get("title", doc["_id"]),
+            "total_comments": doc["total_comments"],
+            "positive_count": doc["positive_count"],
+            "neutral_count": doc["neutral_count"],
+            "negative_count": doc["negative_count"],
+            "release_order": len(aggr) - idx
+        })
     return jsonify(data)
 
-@app.route('/api/policies', methods=['GET'])
+@app.route("/api/policies", methods=["GET"])
 def get_policies():
-    policies = [
-        {"id": "D-2026-012", "title": "Coastal Protection Regulation", "summary": "Establishing regulatory frameworks for safeguarding coastal ecosystems and sustainable shoreline development."},
-        {"id": "D-2026-011", "title": "Electronic ID Standards", "summary": "Technical requirements and privacy safeguards for the implementation of national electronic identification systems."},
-        {"id": "D-2026-010", "title": "Public Health Bill v1.2", "summary": "Comprehensive legislative update addressing emergency response protocols and community health infrastructure."},
-        {"id": "D-2026-009", "title": "Urban Transport Policy", "summary": "Framework for integrating sustainable public transit and reducing carbon emissions in metropolitan areas."},
-        {"id": "D-2026-008", "title": "Data Privacy Framework", "summary": "Official guidelines for personal data protection, storage, and cross-border data transfer protocols."},
-        {"id": "D-2026-007", "title": "Green Energy Initiative", "summary": "Incentives and regulatory requirements for transitioning national power grids to renewable energy sources."},
-    ]
-    return jsonify(policies)
+    policies = list(policies_col.find({}, {"_id": 0}).sort("created_at", -1))
+    data = []
+    for p in policies:
+        data.append({
+            "id": p.get("policy_id"),
+            "title": p.get("title"),
+            "summary": p.get("summary")
+        })
+    return jsonify(data)
 
 @app.route('/api/analytics/compare-linked/<policy_id>', methods=['GET'])
 def compare_linked_policy(policy_id):
@@ -208,6 +248,195 @@ def compare_linked_policy(policy_id):
         ]
         
     return jsonify({"policyId": policy_id, "chain": chain})
+
+@app.route('/api/analyze/bulk', methods=['POST'])
+def bulk_analyze():
+    data = request.json
+    comments = data.get('comments', [])
+    
+    results = []
+    docs_to_insert = []
+    
+    for c in comments:
+        draft_id = c.get('draft_id')
+        text = c.get('text', '')
+        
+        # Analyze comment
+        analysis = process_comment(text)
+        
+        # Create full document
+        doc = {
+            "comment_id": str(uuid.uuid4()),
+            "draft_id": draft_id,
+            "text": text,
+            "sentiment": analysis.get('sentiment', 'NEUTRAL'),
+            "sentiment_score": analysis.get('sentiment_score', 0.0),
+            "summary": analysis.get('summary', ''),
+            "is_toxic": analysis.get('is_toxic', False),
+            "toxicity_score": analysis.get('toxicity_score', 0.0),
+            "processed_at": datetime.now(timezone.utc),
+            "confidence_score": analysis.get('sentiment_score', 0.0),
+            "created_at": datetime.now(timezone.utc)
+        }
+        docs_to_insert.append(doc)
+        results.append(doc)
+        
+    if docs_to_insert:
+        comments_col.insert_many(docs_to_insert)
+        
+    return jsonify({"inserted_count": len(docs_to_insert), "results": results})
+
+@app.route('/api/analytics/trend/<policy_id>', methods=['GET'])
+def policy_sentiment_trend(policy_id):
+    # Find all drafts for this policy
+    drafts = list(drafts_col.find({"policy_id": policy_id}).sort("version_number", 1))
+    
+    if not drafts:
+        return jsonify({"policyId": policy_id, "chain": []})
+        
+    chain = []
+    for d in drafts:
+        draft_id = d.get('draft_id')
+        version = f"v{d.get('version_number', 1.0)}"
+        
+        # Aggregate sentiment for this draft
+        aggr = list(comments_col.aggregate([
+            {"$match": {"draft_id": draft_id}},
+            {"$group": {
+                "_id": "$sentiment",
+                "count": {"$sum": 1}
+            }}
+        ]))
+        
+        sentiment_counts = { "POSITIVE": 0, "NEUTRAL": 0, "NEGATIVE": 0 }
+        for a in aggr:
+            if a["_id"] in sentiment_counts:
+                sentiment_counts[a["_id"]] = a["count"]
+                
+        chain.append({
+            "id": draft_id,
+            "version": version,
+            "positive": sentiment_counts["POSITIVE"],
+            "neutral": sentiment_counts["NEUTRAL"],
+            "negative": sentiment_counts["NEGATIVE"]
+        })
+        
+    return jsonify({"policyId": policy_id, "chain": chain})
+
+@app.route('/api/comments/search', methods=['GET'])
+def search_comments():
+    sentiment = request.args.get('sentiment')
+    policy_id = request.args.get('policy_id')
+    is_toxic = request.args.get('is_toxic')
+    keyword = request.args.get('keyword')
+    
+    query = {}
+    
+    if policy_id:
+        # Find all drafts for this policy
+        drafts = list(drafts_col.find({"policy_id": policy_id}, {"draft_id": 1}))
+        draft_ids = [d['draft_id'] for d in drafts]
+        if draft_ids:
+            query['draft_id'] = {"$in": draft_ids}
+        else:
+            # If no drafts exist for the policy, return empty
+            return jsonify({"results": []})
+            
+    if sentiment:
+        query['sentiment'] = sentiment.upper()
+        
+    if is_toxic is not None:
+        query['is_toxic'] = is_toxic.lower() == 'true'
+        
+    if keyword:
+        query['text'] = {"$regex": keyword, "$options": "i"}
+        
+    # Optional pagination
+    limit = int(request.args.get('limit', 50))
+    skip = int(request.args.get('skip', 0))
+    
+    results_cursor = comments_col.find(query).sort("created_at", -1).skip(skip).limit(limit)
+    
+    results = []
+    for doc in results_cursor:
+        # Format the document for JSON serialization
+        results.append({
+            "comment_id": doc.get('comment_id', ''),
+            "draft_id": doc.get('draft_id', ''),
+            "text": doc.get('text', ''),
+            "sentiment": doc.get('sentiment', 'NEUTRAL'),
+            "sentiment_score": doc.get('sentiment_score', 0.0),
+            "summary": doc.get('summary', ''),
+            "is_toxic": doc.get('is_toxic', False),
+            "toxicity_score": doc.get('toxicity_score', 0.0)
+        })
+        
+    return jsonify({"results": results})
+
+@app.route('/api/reports/generate/<draft_id>', methods=['GET'])
+def generate_report(draft_id):
+    draft = drafts_col.find_one({"draft_id": draft_id})
+    if not draft:
+        return jsonify({"error": "Draft not found"}), 404
+        
+    comments = list(comments_col.find({"draft_id": draft_id}))
+    pdf_buffer = generate_draft_report(draft, comments)
+    
+    return send_file(
+        pdf_buffer,
+        as_attachment=True,
+        download_name=f"Report_{draft_id}.pdf",
+        mimetype='application/pdf'
+    )
+
+@app.route("/api/drafts", methods=["GET"])
+def get_all_drafts():
+    # Fetch all drafts from database
+    drafts = list(drafts_col.find({}, {"_id": 0}).sort("published_date", -1))
+    
+    # Format dates as YYYY-MM-DD
+    for d in drafts:
+        if "published_date" in d and isinstance(d["published_date"], datetime):
+            d["uploadDate"] = d["published_date"].strftime("%Y-%m-%d")
+            d["startDate"] = d["published_date"].strftime("%Y-%m-%d")
+            end_date = d["published_date"] + timedelta(days=30)
+            d["endDate"] = end_date.strftime("%Y-%m-%d")
+        else:
+            d["uploadDate"] = "2026-01-01"
+            d["startDate"] = "2026-01-01"
+            d["endDate"] = "2026-02-01"
+            
+        # UI expects "id" not "draft_id" or consistent with draft_id
+        d["id"] = d.get("draft_id", "D-UNKNOWN")
+        
+    return jsonify(drafts)
+
+@app.route("/api/home/notifications", methods=["GET"])
+def get_home_notifications():
+    # Return a few recent comments and newly created policies as "notifications"
+    recent_comments = list(comments_col.find().sort("created_at", -1).limit(3))
+    recent_policies = list(policies_col.find().sort("created_at", -1).limit(2))
+    
+    notifications = []
+    for c in recent_comments:
+        notifications.append({
+            "type": "comment",
+            "title": f"New Comment on {c.get('draft_id', 'Draft')}",
+            "message": c.get('summary', c.get('text', ''))[:100],
+            "timestamp": "Recent",
+            "class": "dot-new" if c.get('sentiment') == 'POSITIVE' else ("dot-urgent" if c.get('sentiment') == 'NEGATIVE' else "dot-normal")
+        })
+        
+    for p in recent_policies:
+        notifications.append({
+            "type": "policy",
+            "title": "New Policy Created",
+            "message": f"The policy '{p.get('title')}' was successfully added to the system.",
+            "timestamp": "New",
+            "class": "dot-new"
+        })
+        
+    return jsonify(notifications)
 
 if __name__ == '__main__':
     debug = os.getenv('FLASK_DEBUG', 'true').lower() in ('1', 'true', 'yes', 'on')
