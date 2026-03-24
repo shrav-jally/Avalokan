@@ -4,9 +4,16 @@ from datetime import datetime, timezone
 from typing import Optional, List, Literal
 
 try:
+    from dotenv import load_dotenv
+    # Load environment variables from backend/.env when present.
+    env_path = os.path.join(os.path.dirname(__file__), '.env')
+    load_dotenv(dotenv_path=env_path)
+except Exception:
+    pass
+
+try:
     from pydantic import BaseModel, Field
 except ImportError:
-    # Fallback to standard dict representations if pydantic is not available
     pass
 
 # MongoDB Connection String
@@ -52,6 +59,7 @@ class Comment(BaseModel):
     comment_id: str = Field(description="Unique ID for the comment")
     draft_id: str = Field(description="Links to the specific Draft")
     text: str
+    clause_ref: Optional[str] = Field(default=None, description="Reference to a specific legal clause or section (e.g., Section 135)")
     
     # AI Engine Outputs
     sentiment: Literal['POSITIVE', 'NEUTRAL', 'NEGATIVE'] = 'NEUTRAL'
@@ -86,3 +94,4 @@ def setup_db(db):
 policies_col = db.policies
 drafts_col = db.drafts
 comments_col = db.comments
+draft_analysis_col = db.draft_analysis

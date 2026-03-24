@@ -2,18 +2,19 @@ import React, { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
 import cloud from 'd3-cloud';
 
-const SentimentWordCloud = ({ words, sentiment }) => {
+const SentimentWordCloud = ({ words, onWordClick }) => {
     const containerRef = useRef(null);
     const svgRef = useRef(null);
 
-    // Define color scales based on sentiment
-    const colorScales = {
-        positive: d3.scaleSequential(d3.interpolateGreens).domain([0, 100]),
-        neutral: d3.scaleSequential(d3.interpolateGreys).domain([0, 100]),
-        negative: d3.scaleSequential(d3.interpolateReds).domain([0, 100]),
+    // Map the sentiment field to specific colors
+    const getColor = (sentiment) => {
+        switch (sentiment) {
+            case 'positive': return '#0ca678'; // Green
+            case 'negative': return '#e03131'; // Red
+            case 'neutral':
+            default: return '#868e96'; // Gray
+        }
     };
-
-    const colorScale = colorScales[sentiment] || colorScales.neutral;
 
     useEffect(() => {
         if (!containerRef.current || !words || words.length === 0) return;
@@ -58,7 +59,7 @@ const SentimentWordCloud = ({ words, sentiment }) => {
         // Layout configuration
         const layout = cloud()
             .size([width, height])
-            .words(words.map(d => Object.create(d)))
+            .words(words.map(d => ({ ...d })))
             .padding(5)
             .rotate(() => (~~(Math.random() * 2) * 90) - 45) // Randomize between -45 and 45 degrees via step
             .font('Impact')
@@ -84,12 +85,16 @@ const SentimentWordCloud = ({ words, sentiment }) => {
                 .append('text')
                 .style('font-size', '1px') // Start small
                 .style('font-family', 'Impact')
-                .style('fill', d => colorScale(d.value))
+                .style('fill', d => getColor(d.sentiment))
                 .attr('text-anchor', 'middle')
                 .attr('transform', `translate(0,0) rotate(0)`)
+                .style('cursor', onWordClick ? 'pointer' : 'default')
                 .text(d => d.text)
+                .on('click', (event, d) => {
+                    if (onWordClick) onWordClick(d.text);
+                })
                 .on('mouseover', (event, d) => {
-                    tooltip.text(`${d.text}: ${d.value}`)
+                    tooltip.text(`${d.text}: ${d.value} (${d.sentiment})`)
                         .style('visibility', 'visible');
                     d3.select(event.currentTarget).style('opacity', 0.8);
                 })
@@ -109,7 +114,7 @@ const SentimentWordCloud = ({ words, sentiment }) => {
                 .transition()
                 .duration(800)
                 .style('font-size', d => `${d.size}px`)
-                .style('fill', d => colorScale(d.value)) // Update color
+                .style('fill', d => getColor(d.sentiment)) // Update color based on sentiment
                 .attr('transform', d => `translate(${d.x},${d.y}) rotate(${d.rotate})`);
         }
 
@@ -121,7 +126,7 @@ const SentimentWordCloud = ({ words, sentiment }) => {
             if (layout.stop) layout.stop();
         };
 
-    }, [words, sentiment, colorScale]);
+    }, [words, onWordClick]);
 
     return (
         <div

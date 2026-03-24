@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import './App.css';
 import Header from './components/Header';
@@ -17,6 +18,9 @@ import DraftManagement from './components/DraftManagement';
 axios.defaults.withCredentials = true;
 
 function App() {
+  const location = useLocation();
+  const navigate = useNavigate();
+
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
 
@@ -26,6 +30,27 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedPolicy, setSelectedPolicy] = useState(null);
+  const [userRole, setUserRole] = useState('user');
+
+  // URL Path Synchronization
+  useEffect(() => {
+    const path = location.pathname;
+    if (path.startsWith('/policy/')) {
+        const id = path.split('/')[2];
+        if (id && (!selectedPolicy || selectedPolicy.id !== id)) {
+            setSelectedPolicy({ id });
+            setActiveTab('policies');
+        }
+    } else if (path === '/dashboard') {
+        setActiveTab('dashboard');
+    } else if (path === '/global') {
+        setActiveTab('global');
+    } else if (path === '/draftManagement') {
+        setActiveTab('draftManagement');
+    } else if (path === '/' || path === '/home') {
+        setActiveTab('home');
+    }
+  }, [location.pathname]);
 
   useEffect(() => {
     // Check Authentication Status
@@ -34,6 +59,7 @@ function App() {
         const res = await axios.get('http://localhost:5000/api/auth/status');
         if (res.data.isAuthenticated) {
           setIsAuthenticated(true);
+          setUserRole(res.data.role || 'user');
         } else {
           setIsAuthenticated(false);
         }
@@ -113,6 +139,8 @@ function App() {
   const handleTabChange = (tab) => {
     setActiveTab(tab);
     setSelectedPolicy(null);
+    if (tab === 'home') navigate('/');
+    else navigate(`/${tab}`);
   };
 
   return (
@@ -194,11 +222,18 @@ function App() {
               {selectedPolicy ? (
                 <PolicyDetail
                   policy={selectedPolicy}
-                  onBack={() => setSelectedPolicy(null)}
+                  userRole={userRole}
+                  onBack={() => {
+                      setSelectedPolicy(null);
+                      navigate('/policies');
+                  }}
                 />
               ) : (
                 <PoliciesList
-                  onSelectPolicy={(policy) => setSelectedPolicy(policy)}
+                  onSelectPolicy={(policy) => {
+                      setSelectedPolicy(policy);
+                      navigate(`/policy/${policy.id}`);
+                  }}
                 />
               )}
             </div>

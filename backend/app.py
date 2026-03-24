@@ -11,11 +11,17 @@ from flask import Flask, jsonify, session, url_for, redirect, request
 from flask_cors import CORS
 from authlib.integrations.flask_client import OAuth
 from functools import wraps
+import spacy
+try:
+    nlp = spacy.load('en_core_web_sm')
+except:
+    nlp = None
 import uuid
 from datetime import datetime, timezone, timedelta
-from database import policies_col, drafts_col, comments_col
-from ai_engine import process_comment
-from report_generator import generate_draft_report
+from database import policies_col, drafts_col, comments_col, draft_analysis_col
+from ai_engine import process_comment, process_batch, generate_draft_summary, generate_clause_summaries
+from report_generator import generate_professional_report
+from excel_generator import generate_excel_workbook
 from flask import send_file
 
 def _parse_csv_env(var_name: str, default: list[str]) -> list[str]:
@@ -125,23 +131,36 @@ def auth_status():
 @app.route("/api/dashboard/metrics", methods=["GET"])
 def get_metrics():
     total_drafts = drafts_col.count_documents({})
-    total_comments = comments_col.count_documents({})
     active_consultations = drafts_col.count_documents({"status": "open"})
+
+    # Aggregate sentiment distribution from the DraftAnalysis cache
+    cache_aggr = list(draft_analysis_col.aggregate([
+        {"$group": {
+            "_id": None,
+            "totalComments": {"$sum": "$comment_count"},
+            "pos": {"$sum": "$sentiment_counts.POSITIVE"},
+            "neu": {"$sum": "$sentiment_counts.NEUTRAL"},
+            "neg": {"$sum": "$sentiment_counts.NEGATIVE"}
+        }}
+    ]))
     
-    aggr = list(comments_col.aggregate([{"$group": {"_id": "$sentiment", "count": {"$sum": 1}}}]))
-    
-    pos = 0; neu = 0; neg = 0
-    for a in aggr:
-        if a.get("_id") == "POSITIVE": pos = a["count"]
-        elif a.get("_id") == "NEUTRAL": neu = a["count"]
-        elif a.get("_id") == "NEGATIVE": neg = a["count"]
+    if cache_aggr:
+        data_point = cache_aggr[0]
+        total_comments = data_point.get("totalComments", 0)
+        pos = data_point.get("pos", 0)
+        neu = data_point.get("neu", 0)
+        neg = data_point.get("neg", 0)
         
-    total_sent = pos + neu + neg
-    if total_sent > 0:
-        pos_pct = round((pos / total_sent) * 100)
-        neu_pct = round((neu / total_sent) * 100)
-        neg_pct = round((neg / total_sent) * 100)
-    else: pos_pct = neu_pct = neg_pct = 0
+        total_sent = pos + neu + neg
+        if total_sent > 0:
+            pos_pct = round((pos / total_sent) * 100)
+            neu_pct = round((neu / total_sent) * 100)
+            neg_pct = round((neg / total_sent) * 100)
+        else: pos_pct = neu_pct = neg_pct = 0
+    else:
+        # Fallback if no cache exists yet
+        total_comments = 0
+        pos_pct = neu_pct = neg_pct = 0
     
     data = {
         "totalDrafts": total_drafts,
@@ -323,55 +342,6 @@ def policy_sentiment_trend(policy_id):
         
     return jsonify({"policyId": policy_id, "chain": chain})
 
-@app.route('/api/comments/search', methods=['GET'])
-def search_comments():
-    sentiment = request.args.get('sentiment')
-    policy_id = request.args.get('policy_id')
-    is_toxic = request.args.get('is_toxic')
-    keyword = request.args.get('keyword')
-    
-    query = {}
-    
-    if policy_id:
-        # Find all drafts for this policy
-        drafts = list(drafts_col.find({"policy_id": policy_id}, {"draft_id": 1}))
-        draft_ids = [d['draft_id'] for d in drafts]
-        if draft_ids:
-            query['draft_id'] = {"$in": draft_ids}
-        else:
-            # If no drafts exist for the policy, return empty
-            return jsonify({"results": []})
-            
-    if sentiment:
-        query['sentiment'] = sentiment.upper()
-        
-    if is_toxic is not None:
-        query['is_toxic'] = is_toxic.lower() == 'true'
-        
-    if keyword:
-        query['text'] = {"$regex": keyword, "$options": "i"}
-        
-    # Optional pagination
-    limit = int(request.args.get('limit', 50))
-    skip = int(request.args.get('skip', 0))
-    
-    results_cursor = comments_col.find(query).sort("created_at", -1).skip(skip).limit(limit)
-    
-    results = []
-    for doc in results_cursor:
-        # Format the document for JSON serialization
-        results.append({
-            "comment_id": doc.get('comment_id', ''),
-            "draft_id": doc.get('draft_id', ''),
-            "text": doc.get('text', ''),
-            "sentiment": doc.get('sentiment', 'NEUTRAL'),
-            "sentiment_score": doc.get('sentiment_score', 0.0),
-            "summary": doc.get('summary', ''),
-            "is_toxic": doc.get('is_toxic', False),
-            "toxicity_score": doc.get('toxicity_score', 0.0)
-        })
-        
-    return jsonify({"results": results})
 
 @app.route('/api/reports/generate/<draft_id>', methods=['GET'])
 def generate_report(draft_id):
@@ -437,6 +407,432 @@ def get_home_notifications():
         })
         
     return jsonify(notifications)
+
+
+@app.route("/api/analytics/global", methods=["GET"])
+def get_global_analytics():
+    total_comments = comments_col.count_documents({})
+    aggr = list(comments_col.aggregate([
+        {"$group": {"_id": "$sentiment", "count": {"$sum": 1}}}
+    ]))
+    
+    # Calculate percentages for Chart.js/Recharts
+    counts = { "POSITIVE": 0, "NEUTRAL": 0, "NEGATIVE": 0 }
+    for a in aggr:
+        if a["_id"] in counts:
+            counts[a["_id"]] = a["count"]
+            
+    total = sum(counts.values())
+    sentiment_data = [
+        {"name": "Positive", "value": round((counts["POSITIVE"]/total)*100) if total > 0 else 0},
+        {"name": "Neutral", "value": round((counts["NEUTRAL"]/total)*100) if total > 0 else 0},
+        {"name": "Negative", "value": round((counts["NEGATIVE"]/total)*100) if total > 0 else 0}
+    ]
+    
+    return jsonify({
+        "totalComments": total_comments,
+        "sentimentDistribution": sentiment_data
+    })
+
+@app.route("/api/comments/search", methods=["GET"])
+def search_comments():
+    # 1. Fetch parameters
+    draft_id = request.args.get('draft_id')
+    policy_id = request.args.get('policy_id') # Accept policy_id as fallback
+    sentiment = request.args.get('sentiment')
+    stakeholder_type = request.args.get('stakeholder_type')
+    clause_ref = request.args.get('clause_ref')
+    is_toxic = request.args.get('is_toxic')
+    keyword = request.args.get('keyword')
+    high_risk = request.args.get('high_risk', 'false').lower() == 'true'
+    
+    limit = int(request.args.get('limit', 10))
+    skip = int(request.args.get('skip', 0))
+    
+    # 2. Build Query
+    query = {}
+    
+    # Priority: if draft_id provided, use it. If policy_id provided, find its latest draft.
+    if draft_id:
+        query["draft_id"] = draft_id
+    elif policy_id:
+        latest = drafts_col.find_one({"policy_id": policy_id}, sort=[("version_number", -1)])
+        if latest:
+            query["draft_id"] = latest["draft_id"]
+        else:
+            return jsonify({"results": [], "totalCount": 0}), 200
+            
+    if sentiment:
+        query["sentiment"] = sentiment.upper()
+    
+    if clause_ref:
+        query["clause_ref"] = clause_ref
+        
+    if is_toxic is not None:
+        query["is_toxic"] = is_toxic.lower() == 'true'
+        
+    if high_risk:
+        query["sentiment"] = "NEGATIVE"
+        query["is_toxic"] = True
+        
+    if keyword:
+        query["text"] = {"$regex": keyword, "$options": "i"}
+        
+    # 3. Execute
+    total_count = comments_col.count_documents(query)
+    results = list(comments_col.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit))
+    
+    # 4. Calculate Distribution (ignoring active sentiment locks)
+    aggr_query = query.copy()
+    aggr_query.pop("sentiment", None)
+    if high_risk:
+        aggr_query.pop("is_toxic", None)
+
+    distribution_aggr = list(comments_col.aggregate([
+        {"$match": aggr_query},
+        {"$group": {"_id": "$sentiment", "count": {"$sum": 1}}}
+    ]))
+    
+    dist_counts = { "POSITIVE": 0, "NEUTRAL": 0, "NEGATIVE": 0 }
+    for a in distribution_aggr:
+        s_id = a.get("_id")
+        if s_id and s_id in dist_counts:
+            dist_counts[s_id] = a["count"]
+            
+    dist_total = sum(dist_counts.values()) or 1
+    sentiment_distribution = [
+        {"name": "Positive", "value": round((dist_counts["POSITIVE"]/dist_total)*100)},
+        {"name": "Neutral", "value": round((dist_counts["NEUTRAL"]/dist_total)*100)},
+        {"name": "Negative", "value": round((dist_counts["NEGATIVE"]/dist_total)*100)}
+    ]
+    
+    return jsonify({
+        "results": results,
+        "totalCount": total_count,
+        "limit": limit,
+        "skip": skip,
+        "sentimentDistribution": sentiment_distribution
+    })
+
+@app.route("/api/analytics/wordcloud/<draft_id>", methods=["GET"])
+def get_wordcloud_data(draft_id):
+    # Fallback to latest draft if policy_id is sent
+    policy = policies_col.find_one({"policy_id": draft_id})
+    actual_draft_id = draft_id
+    if policy:
+        latest = drafts_col.find_one({"policy_id": draft_id}, sort=[("version_number", -1)])
+        if latest: actual_draft_id = latest["draft_id"]
+
+    comments = list(comments_col.find({"draft_id": actual_draft_id}, {"text": 1, "sentiment": 1}))
+    word_stats = {} # {word: {pos: 0, neu: 0, neg: 0, total: 0}}
+    
+    if nlp:
+        for c in comments:
+            txt = c.get("text", "")
+            sent = c.get("sentiment", "NEUTRAL").lower()
+            if not txt:
+                continue
+                
+            doc = nlp(txt)
+            for token in doc:
+                if (token.pos_ in ["NOUN", "ADJ"]) and not token.is_stop and len(token.text) > 3:
+                    word = token.text.lower()
+                    if word not in word_stats:
+                        word_stats[word] = {"positive": 0, "neutral": 0, "negative": 0, "total": 0}
+                    if sent in word_stats[word]:
+                        word_stats[word][sent] += 1
+                    word_stats[word]["total"] += 1
+                    
+    # Sort and take top 50
+    sorted_words = sorted(word_stats.items(), key=lambda x: x[1]["total"], reverse=True)[:50]
+    
+    results = []
+    for word, stats in sorted_words:
+        # Determine dominant sentiment
+        dom_sent = "neutral"
+        if stats["positive"] > stats["neutral"] and stats["positive"] > stats["negative"]:
+            dom_sent = "positive"
+        elif stats["negative"] > stats["positive"] and stats["negative"] > stats["neutral"]:
+            dom_sent = "negative"
+            
+        results.append({
+            "text": word,
+            "value": stats["total"],
+            "sentiment": dom_sent
+        })
+        
+    return jsonify(results)
+
+def _fetch_draft_analytics_payload(actual_draft_id):
+    # Sentiment Breakdown
+    aggr = list(comments_col.aggregate([
+        {"$match": {"draft_id": actual_draft_id}},
+        {"$group": {"_id": "$sentiment", "count": {"$sum": 1}}}
+    ]))
+    
+    counts = { "POSITIVE": 0, "NEUTRAL": 0, "NEGATIVE": 0 }
+    for a in aggr:
+        if a["_id"] in counts:
+            counts[a["_id"]] = a["count"]
+            
+    # Word Frequency per Sentiment using spaCy
+    word_clouds = {"positive": [], "neutral": [], "negative": []}
+    for s in ["POSITIVE", "NEUTRAL", "NEGATIVE"]:
+        comm_list = list(comments_col.find({"draft_id": actual_draft_id, "sentiment": s}, {"text": 1}))
+        wc = {}
+        if nlp:
+            combined_text = ". ".join([c.get("text", "") for c in comm_list])
+            if combined_text:
+                doc = nlp(combined_text)
+                for token in doc:
+                    if (token.pos_ in ["NOUN", "ADJ"]) and not token.is_stop and len(token.text) > 3:
+                        clean_w = token.text.lower()
+                        wc[clean_w] = wc.get(clean_w, 0) + 1
+        else:
+            for c in comm_list:
+                words = c.get("text", "").lower().split()
+                for w in words:
+                    clean_w = "".join(filter(str.isalnum, w))
+                    if clean_w and len(clean_w) > 3:
+                        wc[clean_w] = wc.get(clean_w, 0) + 1
+                        
+        sorted_wc = sorted(wc.items(), key=lambda x: x[1], reverse=True)[:20]
+        word_clouds[s.lower()] = [{"text": w, "value": c, "sentiment": s.lower()} for w, c in sorted_wc]
+
+    exec_summary_doc = draft_analysis_col.find_one({"draft_id": actual_draft_id})
+    exec_summary = exec_summary_doc.get("combined_summary") if exec_summary_doc else None
+
+    summaries = list(comments_col.find({"draft_id": actual_draft_id, "summary": {"$ne": ""}}).sort("sentiment_score", -1).limit(5))
+    heuristic_summary = " ".join([s["summary"] for s in summaries if s.get("summary")])
+    
+    return {
+        "draft_id": actual_draft_id,
+        "sentiment": [
+            {"name": "Positive", "value": counts["POSITIVE"]},
+            {"name": "Neutral", "value": counts["NEUTRAL"]},
+            {"name": "Negative", "value": counts["NEGATIVE"]}
+        ],
+        "wordCloud": word_clouds,
+        "combinedSummary": exec_summary or heuristic_summary or "No summary available for this draft yet.",
+        "last_updated": exec_summary_doc.get("generated_at").isoformat() if exec_summary_doc and exec_summary_doc.get("generated_at") else None,
+        "is_meta_summary": bool(exec_summary),
+        "comment_count": counts["POSITIVE"] + counts["NEUTRAL"] + counts["NEGATIVE"],
+        "clauseSummaries": generate_clause_summaries(actual_draft_id)
+    }
+
+@app.route("/api/analytics/draft/<draft_id>", methods=["GET"])
+def get_draft_analytics(draft_id):
+    policy = policies_col.find_one({"policy_id": draft_id})
+    actual_draft_id = draft_id
+    if policy:
+        latest_draft = drafts_col.find_one({"policy_id": draft_id}, sort=[("version_number", -1)])
+        if latest_draft:
+            actual_draft_id = latest_draft["draft_id"]
+
+    payload = _fetch_draft_analytics_payload(actual_draft_id)
+    return jsonify(payload)
+
+@app.route("/api/reports/pdf/<draft_id>", methods=["GET"])
+def get_pdf_report(draft_id):
+    """Generates and returns a professional PDF report for the draft."""
+    draft = drafts_col.find_one({"draft_id": draft_id})
+    if not draft:
+        policy = policies_col.find_one({"policy_id": draft_id})
+        if policy:
+            draft = drafts_col.find_one({"policy_id": draft_id}, sort=[("version_number", -1)])
+    
+    if not draft:
+        return jsonify({"error": "Draft not found"}), 404
+        
+    actual_draft_id = draft["draft_id"]
+    analytics_payload = _fetch_draft_analytics_payload(actual_draft_id)
+    
+    pdf_buffer = generate_professional_report(draft, analytics_payload)
+    
+    filename = f"Consultation_Report_{actual_draft_id}.pdf"
+    return send_file(
+        pdf_buffer,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/pdf'
+    )
+
+@app.route("/api/reports/excel/<draft_id>", methods=["GET"])
+def get_excel_report(draft_id):
+    """Generates and returns an Excel workbook for the draft consultation."""
+    draft = drafts_col.find_one({"draft_id": draft_id})
+    if not draft:
+        policy = policies_col.find_one({"policy_id": draft_id})
+        if policy:
+            draft = drafts_col.find_one({"policy_id": draft_id}, sort=[("version_number", -1)])
+    
+    if not draft:
+        return jsonify({"error": "Draft not found"}), 404
+        
+    actual_draft_id = draft["draft_id"]
+    analytics_payload = _fetch_draft_analytics_payload(actual_draft_id)
+    
+    # Fetch all comments for Sheet 2
+    raw_comments = list(comments_col.find({"draft_id": actual_draft_id}, {"_id": 0}))
+    
+    excel_buffer = generate_excel_workbook(draft, analytics_payload, raw_comments)
+    
+    filename = f"Consultation_Data_{actual_draft_id}.xlsx"
+    return send_file(
+        excel_buffer,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+
+@app.route("/api/analytics/policy-trend/<policy_id>", methods=["GET"])
+def get_policy_trend(policy_id):
+    """
+    Calculates sentiment distribution across all draft versions of a policy.
+    """
+    # 1. Fetch all drafts for this policy sorted by version
+    drafts = list(drafts_col.find({"policy_id": policy_id}).sort("version_number", 1))
+    
+    if not drafts:
+        return jsonify([])
+
+    draft_ids = [d["draft_id"] for d in drafts]
+    
+    # 2. Aggregate sentiment counts for all these drafts in one go
+    pipeline = [
+        {"$match": {"draft_id": {"$in": draft_ids}}},
+        {"$group": {
+            "_id": {"draft_id": "$draft_id", "sentiment": "$sentiment"},
+            "count": {"$sum": 1}
+        }}
+    ]
+    results = list(comments_col.aggregate(pipeline))
+    
+    # 3. Organize results into a lookup map
+    stats_map = {}
+    for r in results:
+        d_id = r["_id"]["draft_id"]
+        sent = r["_id"]["sentiment"]
+        count = r["count"]
+        
+        if d_id not in stats_map:
+            stats_map[d_id] = {"POSITIVE": 0, "NEUTRAL": 0, "NEGATIVE": 0, "total": 0}
+        
+        if sent in stats_map[d_id]:
+            stats_map[d_id][sent] = count
+            stats_map[d_id]["total"] += count
+        
+    # 4. Build the final timeseries array
+    trend_data = []
+    for d in drafts:
+        d_id = d["draft_id"]
+        v = d.get("version_number", 1.0)
+        s = stats_map.get(d_id, {"POSITIVE": 0, "NEUTRAL": 0, "NEGATIVE": 0, "total": 0})
+        total = s["total"] or 1 # Avoid division by zero
+        
+        trend_data.append({
+            "draft_id": d_id,
+            "version": f"v{v}",
+            "positive": round((s["POSITIVE"] / total) * 100),
+            "negative": round((s["NEGATIVE"] / total) * 100),
+            "neutral": round((s["NEUTRAL"] / total) * 100)
+        })
+        
+    return jsonify(trend_data)
+
+@app.route("/api/comments/upload", methods=["POST"])
+def upload_comments():
+    data = request.json
+    comments = data.get('comments', [])
+    draft_id = data.get('draft_id')
+    
+    if not comments or not draft_id:
+        return jsonify({"error": "Missing comments or draft_id"}), 400
+        
+    comment_texts = [c.get('text', '') for c in comments]
+    
+    analyzed_docs = []
+    try:
+        # 1. Process batch through AI Engine
+        ai_results = process_batch(comment_texts)
+        
+        for idx, res in enumerate(ai_results):
+            analyzed_docs.append({
+                "comment_id": str(uuid.uuid4()),
+                "draft_id": draft_id,
+                "text": comment_texts[idx],
+                "sentiment": res.get("sentiment", "NEUTRAL").upper(),
+                "sentiment_score": res.get("sentiment_score", 0.0),
+                "is_toxic": res.get("is_toxic", False),
+                "toxicity_score": res.get("toxicity_score", 0.0),
+                "summary": res.get("summary", ""),
+                "created_at": datetime.now(timezone.utc),
+                "processed_at": datetime.now(timezone.utc)
+            })
+    except Exception as e:
+        # 3. Fallback: Save with 'pending' status if AI fails
+        print(f"AI Engine Error: {e}")
+        for text_val in comment_texts:
+            analyzed_docs.append({
+                "comment_id": str(uuid.uuid4()),
+                "draft_id": draft_id,
+                "text": text_val,
+                "sentiment": "PENDING",
+                "sentiment_score": 0.0,
+                "is_toxic": False,
+                "summary": "",
+                "created_at": datetime.now(timezone.utc),
+                "error": str(e)
+            })
+            
+    # 2. Save to MongoDB
+    if analyzed_docs:
+        comments_col.insert_many(analyzed_docs)
+        
+    return jsonify({
+        "status": "success",
+        "processed_count": len(analyzed_docs),
+        "message": f"Successfully uploaded {len(analyzed_docs)} comments."
+    })
+
+@app.route("/api/system/status", methods=["GET"])
+def get_system_status():
+    return jsonify({
+        "status": "healthy",
+        "models": [
+            {"name": "Sentiment", "id": "distilbert-base-uncased-finetuned-sst-2-english", "v": "1.0"},
+            {"name": "Toxicity", "id": "unitary/toxic-bert", "v": "1.0"},
+            {"name": "Summarizer", "id": "t5-small", "v": "1.1"}
+        ],
+        "last_refresh": datetime.now(timezone.utc).isoformat()
+    })
+
+@app.route("/api/analysis/summarize-draft/<draft_id>", methods=["POST"])
+def trigger_draft_summary(draft_id):
+    # Determine search strategy: if draft_id is actually a policy_id, pick the latest draft
+    policy = policies_col.find_one({"policy_id": draft_id})
+    actual_draft_id = draft_id
+    if policy:
+        latest = drafts_col.find_one({"policy_id": draft_id}, sort=[("version_number", -1)])
+        if latest: actual_draft_id = latest["draft_id"]
+
+    # Safety Check: comment_count > 10
+    comment_count = comments_col.count_documents({"draft_id": actual_draft_id})
+    if comment_count < 10:
+        return jsonify({
+            "error": "Not enough data", 
+            "message": f"Draft only has {comment_count} comments. At least 10 comments are required for executive summarization."
+        }), 400
+        
+    try:
+        final_summary = generate_draft_summary(actual_draft_id)
+        return jsonify({
+            "status": "success",
+            "draft_id": actual_draft_id,
+            "executive_summary": final_summary
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     debug = os.getenv('FLASK_DEBUG', 'true').lower() in ('1', 'true', 'yes', 'on')

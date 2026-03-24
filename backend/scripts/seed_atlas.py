@@ -64,6 +64,8 @@ def generate_comments_for_draft(draft_id, published_date):
             "comment_id": str(uuid.uuid4()),
             "draft_id": draft_id,
             "text": full_text,
+            "clause_ref": term if "Section" in term else f"Section {random.randint(1, 150)}",
+            "stakeholder_type": person,
             "sentiment": sentiment,
             "sentiment_score": random.uniform(0.7, 0.99),
             "summary": summary,

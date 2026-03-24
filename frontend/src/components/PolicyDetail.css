@@ -98,6 +98,58 @@
     gap: 1.5rem;
 }
 
+/* Export Dropdown */
+.pd-export-dropdown-container {
+    position: relative;
+    display: inline-block;
+}
+
+.pd-export-menu {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    margin-top: 0.5rem;
+    background: white;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    z-index: 100;
+    min-width: 240px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: 4px;
+}
+
+.pd-export-item {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    background: none;
+    border: none;
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    transition: background 0.2s;
+    border-radius: 6px;
+}
+
+.pd-export-item:hover {
+    background-color: #f1f3f5;
+}
+
+.spin-animation {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
 .pd-card {
     background-color: white;
     border: 1px solid var(--border-color);
@@ -377,3 +429,5 @@
         grid-template-columns: 1fr;
     }
 }
+.spin-animation { animation: spin 2s linear infinite; display: inline-block; } 
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }

@@ -8,7 +8,6 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 
 class SentimentAnalyzer:
     def __init__(self):
-        # Using the requested model
         self.device = 0 if torch.cuda.is_available() else -1
         self.pipeline = pipeline(
             "sentiment-analysis",
@@ -18,13 +17,34 @@ class SentimentAnalyzer:
         )
 
     def analyze(self, text: str):
-        # Truncate to maximum 512 tokens to avoid length errors
         result = self.pipeline(text, truncation=True, max_length=512)[0]
-        return result['label'], result['score']
+        # Map binary LABEL_0/LABEL_1 or POSITIVE/NEGATIVE to Pos/Neg/Neu
+        # This specific model is binary (POS/NEG), so we map accordingly.
+        label = result['label']
+        if label.upper() == 'POSITIVE':
+            return "Positive", result['score']
+        elif label.upper() == 'NEGATIVE':
+            return "Negative", result['score']
+        return "Neutral", result['score']
 
-class CommentSummarizer:
+class ToxicityDetector:
     def __init__(self):
-        # Using T5-small as requested
+        self.device = 0 if torch.cuda.is_available() else -1
+        self.pipeline = pipeline(
+            "text-classification",
+            model="unitary/toxic-bert",
+            device=self.device,
+            model_kwargs={"cache_dir": CACHE_DIR}
+        )
+
+    def detect(self, text: str):
+        result = self.pipeline(text, truncation=True, max_length=512)[0]
+        # Flag if score > 0.7
+        is_toxic = result['score'] > 0.7
+        return is_toxic, result['score']
+
+class Summarizer:
+    def __init__(self):
         self.device = 0 if torch.cuda.is_available() else -1
         self.pipeline = pipeline(
             "summarization",
@@ -34,84 +54,193 @@ class CommentSummarizer:
         )
 
     def summarize(self, text: str):
-        # T5 expects a task prefix
-        input_text = f"summarize: {text}"
-        # Setting max_length and min_length; these can be adjusted as needed
-        result = self.pipeline(input_text, max_length=50, min_length=10, truncation=True)[0]
+        if len(text.split()) < 10:
+            return text
+        result = self.pipeline(f"summarize: {text}", max_length=30, min_length=5, truncation=True)[0]
         return result['summary_text']
 
-class ToxicityDetector:
+class HierarchicalSummarizer:
     def __init__(self):
-        # Using a popular toxicity model
         self.device = 0 if torch.cuda.is_available() else -1
         self.pipeline = pipeline(
-            "text-classification",
-            model="unitary/toxic-bert",
+            "summarization",
+            model="sshleifer/distilbart-cnn-12-6",
             device=self.device,
             model_kwargs={"cache_dir": CACHE_DIR}
         )
 
-    def is_toxic(self, text: str):
-        result = self.pipeline(text, truncation=True, max_length=512)[0]
-        # unitary/toxic-bert typically labels toxic as 'toxic', 'severe_toxic', etc.
-        # It's a multilabel model so we check for toxicity in the label.
-        is_toxic = result['label'] == 'toxic' and result['score'] > 0.5
-        return is_toxic, result['score']
+    def summarize_text_block(self, text, max_len=150):
+        if not text.strip(): return ""
+        if len(text.split()) < 30: return text
+        try:
+            res = self.pipeline(text, max_length=max_len, min_length=30, truncation=True)[0]
+            return res['summary_text']
+        except Exception:
+            return text[:500]
 
-# Global singletons for lazy initialization
-_sentiment_analyzer = None
-_comment_summarizer = None
-_toxicity_detector = None
+# Lazy Initialization
+_sentiment = None
+_toxic = None
+_summary = None
+_meta_summarizer = None
 
-def _get_analyzers():
-    """Lazy-load the models to save memory and avoid importing on boot if not used."""
-    global _sentiment_analyzer, _comment_summarizer, _toxicity_detector
-    if _sentiment_analyzer is None:
-        _sentiment_analyzer = SentimentAnalyzer()
-    if _comment_summarizer is None:
-        _comment_summarizer = CommentSummarizer()
-    if _toxicity_detector is None:
-        _toxicity_detector = ToxicityDetector()
-    return _sentiment_analyzer, _comment_summarizer, _toxicity_detector
+def _init_models():
+    global _sentiment, _toxic, _summary, _meta_summarizer
+    if _sentiment is None: _sentiment = SentimentAnalyzer()
+    if _toxic is None: _toxic = ToxicityDetector()
+    if _summary is None: _summary = Summarizer()
+    if _meta_summarizer is None: _meta_summarizer = HierarchicalSummarizer()
+
+def process_batch(comment_texts):
+    """Runs AI pipeline in a loop for a batch of texts."""
+    _init_models()
+    results = []
+    for text in comment_texts:
+        # Standard cleaning
+        text = text.strip()
+        if not text: continue
+        
+        s_label, s_score = _sentiment.analyze(text)
+        t_flag, t_score = _toxic.detect(text)
+        summary = _summary.summarize(text)
+        
+        results.append({
+            "text": text,
+            "sentiment": s_label.upper(),
+            "sentiment_score": float(s_score),
+            "is_toxic": bool(t_flag),
+            "toxicity_score": float(t_score),
+            "summary": summary
+        })
+    return results
+
+def generate_draft_summary(draft_id):
+    """
+    Consolidates feedback into a hierarchical Meta-Summary.
+    """
+    from database import comments_col, draft_analysis_col
+    from datetime import datetime, timezone
+    
+    _init_models()
+    
+    # 1. Fetch AI-generated comment summaries and sentiments
+    comments = list(comments_col.find({"draft_id": draft_id}, {"summary": 1, "sentiment": 1}))
+    all_summaries = [c.get("summary", "") for c in comments if c.get("summary")]
+    
+    # Calculate sentiment distribution for caching
+    sent_counts = {"POSITIVE": 0, "NEUTRAL": 0, "NEGATIVE": 0}
+    for c in comments:
+        s = c.get("sentiment", "NEUTRAL").upper()
+        if s in sent_counts:
+            sent_counts[s] += 1
+    
+    if not all_summaries:
+        return "No summary data found for this draft."
+        
+    # 2. Chunking (Combine into 500-word blocks)
+    chunks = []
+    current_chunk = []
+    current_word_count = 0
+    
+    for s in all_summaries:
+        word_count = len(s.split())
+        if current_word_count + word_count > 500:
+            chunks.append(" ".join(current_chunk))
+            current_chunk = [s]
+            current_word_count = word_count
+        else:
+            current_chunk.append(s)
+            current_word_count += word_count
+            
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+        
+    # 3. Hierarchical Summarization
+    intermediate_summaries = []
+    for chunk in chunks:
+        res = _meta_summarizer.summarize_text_block(chunk, max_len=150)
+        intermediate_summaries.append(res)
+        
+    # Final Meta-Summarization (Target 5 sentences)
+    meta_input = " ".join(intermediate_summaries)
+    final_executive_summary = _meta_summarizer.summarize_text_block(meta_input, max_len=250)
+    
+    # 3.5 Generate Keywords using SpaCy against the chunks
+    import spacy
+    try:
+        nlp = spacy.load('en_core_web_sm')
+        meta_doc = nlp(meta_input)
+        kw_counts = {}
+        for token in meta_doc:
+            if token.pos_ in ["NOUN", "ADJ"] and not token.is_stop and len(token.text) > 3:
+                w = token.text.lower()
+                kw_counts[w] = kw_counts.get(w, 0) + 1
+        top_keywords = [k for k, v in sorted(kw_counts.items(), key=lambda x: x[1], reverse=True)[:15]]
+    except:
+        top_keywords = []
+
+    # 4. Save to MongoDB
+    analysis_doc = {
+        "draft_id": draft_id,
+        "combined_summary": final_executive_summary,
+        "keywords": top_keywords,
+        "sentiment_counts": sent_counts,
+        "generated_at": datetime.now(timezone.utc),
+        "comment_count": len(comments),
+        "chunk_count": len(chunks)
+    }
+    
+    draft_analysis_col.update_one(
+        {"draft_id": draft_id},
+        {"$set": analysis_doc},
+        upsert=True
+    )
+    
+    return final_executive_summary
+
+def generate_clause_summaries(draft_id):
+    """
+    Groups comments by clause_ref and generates a 1-sentence mini-summary.
+    """
+    from database import comments_col
+    _init_models()
+    
+    # 1. Fetch comments with a clause reference (map nulls to General Suggestions)
+    pipeline = [
+        {"$match": {"draft_id": draft_id}},
+        {"$group": {
+            "_id": {"$ifNull": ["$clause_ref", "General Suggestions"]},
+            "comments": {"$push": "$text"},
+            "sentiments": {"$push": "$sentiment"}
+        }}
+    ]
+    
+    clause_groups = list(comments_col.aggregate(pipeline))
+    results = []
+    
+    for group in clause_groups:
+        clause = group["_id"]
+        # Use first 3 representative comments for the summary to keep it snappy
+        combined_context = ". ".join(group["comments"][:3])
+        
+        # Calculate dominant sentiment
+        s_counts = {}
+        for s in group["sentiments"]:
+            s_counts[s] = s_counts.get(s, 0) + 1
+        dominant_sentiment = max(s_counts, key=s_counts.get) if s_counts else "NEUTRAL"
+        
+        # Generate 1-sentence mini-summary using the fast summarizer
+        summary = _summary.summarize(combined_context)
+        
+        results.append({
+            "clause": clause,
+            "summary": summary,
+            "sentiment": dominant_sentiment.lower(),
+            "count": len(group["comments"])
+        })
+        
+    return sorted(results, key=lambda x: x["count"], reverse=True)
 
 def process_comment(text: str) -> dict:
-    """
-    Takes raw text and returns a JSON-serializable structured object with sentiment, 
-    summary, and toxicity flags.
-    """
-    # Handle empty/short text robustly
-    clean_text = text.strip() if text else ""
-    if not clean_text:
-        return {
-            "text": clean_text,
-            "sentiment": "NEUTRAL",
-            "sentiment_score": 0.0,
-            "summary": "",
-            "is_toxic": False,
-            "toxicity_score": 0.0,
-            "error": "Empty text provided"
-        }
-
-    sentiment_analyzer, comment_summarizer, toxicity_detector = _get_analyzers()
-
-    # 1. Toxicity Check
-    is_toxic_flag, tox_score = toxicity_detector.is_toxic(clean_text)
-
-    # 2. Sentiment Check
-    sent_label, sent_score = sentiment_analyzer.analyze(clean_text)
-
-    # 3. Summarization Check
-    # Summarize only if text is longer than roughly 15 words; otherwise, just return text as summary
-    if len(clean_text.split()) > 15:
-        summary = comment_summarizer.summarize(clean_text)
-    else:
-        summary = clean_text
-
-    return {
-        "text": clean_text,
-        "sentiment": sent_label,
-        "sentiment_score": float(sent_score),
-        "summary": summary,
-        "is_toxic": bool(is_toxic_flag),
-        "toxicity_score": float(tox_score)
-    }
+    """Legacy wrapper for backward compatibility."""
+    return process_batch([text])[0]
