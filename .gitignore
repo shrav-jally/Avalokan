@@ -8,6 +8,11 @@ __pycache__/
 .venv/
 venv/
 
+# ML Model Caches - NEVER commit (gigabytes in size)
+**/.model_cache/
+.model_cache/
+backend/.model_cache/
+
 # Environment files
 .env
 backend/.env
