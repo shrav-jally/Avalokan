@@ -20,7 +20,8 @@ const DraftManagement = () => {
       setLoading(false);
     } catch (err) {
       console.error('Error fetching drafts:', err);
-      setError('Failed to fetch drafts.');
+      setError('Failed to fetch drafts Workspace Error. The server may be unreachable.');
+      setDrafts([]);
       setLoading(false);
     }
   };
@@ -116,11 +117,18 @@ const DraftManagement = () => {
     }
 
     if (isEditing) {
-      setDrafts(drafts.map(d => 
-        d.id === currentDraft.id 
-          ? { ...d, title: formData.title, startDate: formData.startDate, endDate: formData.endDate, file: formData.file || d.file } 
-          : d
-      ));
+      axios.put(`http://localhost:5000/api/admin/update-draft/${currentDraft.id}`, {
+        startDate: formData.startDate,
+        endDate: formData.endDate
+      }).then((res) => {
+        if (res.status === 200) {
+          setDrafts(drafts.map(d => 
+            d.id === currentDraft.id 
+              ? { ...d, title: formData.title, startDate: formData.startDate, endDate: formData.endDate, file: formData.file || d.file } 
+              : d
+          ));
+        }
+      }).catch(err => setFormError("Failed to save dates in database."));
     } else {
       const newDraft = {
         id: `D-${new Date().getFullYear()}-00${drafts.length + 10}`,
@@ -205,6 +213,8 @@ const DraftManagement = () => {
           </button>
         </div>
       </div>
+
+      {error && <div className="error-banner" style={{marginBottom: '1rem'}}>{error}</div>}
 
       <div className="panel-white">
         <div className="table-responsive">

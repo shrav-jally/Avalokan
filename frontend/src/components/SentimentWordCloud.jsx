@@ -17,113 +17,127 @@ const SentimentWordCloud = ({ words, onWordClick }) => {
     };
 
     useEffect(() => {
-        if (!containerRef.current || !words || words.length === 0) return;
+        let isMounted = true;
+        let layout;
 
-        // Dimensions
-        const width = containerRef.current.clientWidth || 500;
-        const height = containerRef.current.clientHeight || 300;
+        const renderCloud = () => {
+            if (!isMounted || !containerRef.current || !words || words.length === 0) return;
 
-        // Clear previous SVG
-        d3.select(containerRef.current).selectAll('svg').remove();
+            // Dimensions
+            const width = containerRef.current.clientWidth || 500;
+            const height = containerRef.current.clientHeight || 300;
 
-        // Create SVG container
-        const svg = d3.select(containerRef.current)
-            .append('svg')
-            .attr('width', width)
-            .attr('height', height);
+            // Clear previous SVG
+            d3.select(containerRef.current).selectAll('svg').remove();
 
-        const g = svg.append('g')
-            .attr('transform', `translate(${width / 2},${height / 2})`);
+            // Create SVG container
+            const svg = d3.select(containerRef.current)
+                .append('svg')
+                .attr('width', width)
+                .attr('height', height);
 
-        svgRef.current = g;
+            const g = svg.append('g')
+                .attr('transform', `translate(${width / 2},${height / 2})`);
 
-        // Tooltip setup
-        const tooltip = d3.select(containerRef.current)
-            .append('div')
-            .attr('class', 'word-cloud-tooltip')
-            .style('position', 'absolute')
-            .style('visibility', 'hidden')
-            .style('background', 'rgba(0, 0, 0, 0.8)')
-            .style('color', '#fff')
-            .style('padding', '5px 10px')
-            .style('border-radius', '4px')
-            .style('font-size', '12px')
-            .style('pointer-events', 'none')
-            .style('z-index', '10');
+            svgRef.current = g;
 
-        // Setup Scale for font sizes
-        const sizeScale = d3.scaleLinear()
-            .domain([d3.min(words, d => d.value) || 0, d3.max(words, d => d.value) || 1])
-            .range([15, 80]); // Min 15px, Max 80px
+            // Tooltip setup
+            const tooltip = d3.select(containerRef.current)
+                .append('div')
+                .attr('class', 'word-cloud-tooltip')
+                .style('position', 'absolute')
+                .style('visibility', 'hidden')
+                .style('background', 'rgba(0, 0, 0, 0.8)')
+                .style('color', '#fff')
+                .style('padding', '5px 10px')
+                .style('border-radius', '4px')
+                .style('font-size', '12px')
+                .style('pointer-events', 'none')
+                .style('z-index', '10');
 
-        // Layout configuration
-        const layout = cloud()
-            .size([width, height])
-            .words(words.map(d => ({ ...d })))
-            .padding(5)
-            .rotate(() => (~~(Math.random() * 2) * 90) - 45) // Randomize between -45 and 45 degrees via step
-            .font('Impact')
-            .fontSize(d => sizeScale(d.value))
-            .on('end', draw);
+            // Setup Scale for font sizes
+            const sizeScale = d3.scaleLinear()
+                .domain([d3.min(words, d => d.value) || 0, d3.max(words, d => d.value) || 1])
+                .range([15, 80]); // Min 15px, Max 80px
 
-        layout.start();
+            // Layout configuration
+            layout = cloud()
+                .size([width, height])
+                .words(words.map(d => ({ ...d })))
+                .padding(5)
+                .rotate(() => (~~(Math.random() * 2) * 90) - 45) // Randomize between -45 and 45 degrees via step
+                .font('Impact')
+                .fontSize(d => sizeScale(d.value))
+                .on('end', draw);
 
-        // Draw function
-        function draw(drawnWords) {
-            const texts = g.selectAll('text')
-                .data(drawnWords, d => d.text);
+            layout.start();
 
-            // EXIT
-            texts.exit()
-                .transition()
-                .duration(500)
-                .style('opacity', 0)
-                .remove();
+            // Draw function
+            function draw(drawnWords) {
+                if (!isMounted || !containerRef.current || !document.body.contains(containerRef.current)) return;
+                
+                const texts = g.selectAll('text')
+                    .data(drawnWords, d => d.text);
 
-            // ENTER
-            const enterTexts = texts.enter()
-                .append('text')
-                .style('font-size', '1px') // Start small
-                .style('font-family', 'Impact')
-                .style('fill', d => getColor(d.sentiment))
-                .attr('text-anchor', 'middle')
-                .attr('transform', `translate(0,0) rotate(0)`)
-                .style('cursor', onWordClick ? 'pointer' : 'default')
-                .text(d => d.text)
-                .on('click', (event, d) => {
-                    if (onWordClick) onWordClick(d.text);
-                })
-                .on('mouseover', (event, d) => {
-                    tooltip.text(`${d.text}: ${d.value} (${d.sentiment})`)
-                        .style('visibility', 'visible');
-                    d3.select(event.currentTarget).style('opacity', 0.8);
-                })
-                .on('mousemove', (event) => {
-                    // Get coordinates relative to the parent container
-                    const [x, y] = d3.pointer(event, containerRef.current);
-                    tooltip.style('top', `${y - 30}px`)
-                        .style('left', `${x + 10}px`);
-                })
-                .on('mouseout', (event) => {
-                    tooltip.style('visibility', 'hidden');
-                    d3.select(event.currentTarget).style('opacity', 1);
-                });
+                // EXIT
+                texts.exit()
+                    .transition()
+                    .duration(500)
+                    .style('opacity', 0)
+                    .remove();
 
-            // UPDATE + ENTER (Merge)
-            enterTexts.merge(texts)
-                .transition()
-                .duration(800)
-                .style('font-size', d => `${d.size}px`)
-                .style('fill', d => getColor(d.sentiment)) // Update color based on sentiment
-                .attr('transform', d => `translate(${d.x},${d.y}) rotate(${d.rotate})`);
-        }
+                // ENTER
+                const enterTexts = texts.enter()
+                    .append('text')
+                    .style('font-size', '1px') // Start small
+                    .style('font-family', 'Impact')
+                    .style('fill', d => getColor(d.sentiment))
+                    .attr('text-anchor', 'middle')
+                    .attr('transform', `translate(0,0) rotate(0)`)
+                    .style('cursor', onWordClick ? 'pointer' : 'default')
+                    .text(d => d.text)
+                    .on('click', (event, d) => {
+                        if (onWordClick) onWordClick(d.text);
+                    })
+                    .on('mouseover', (event, d) => {
+                        tooltip.text(`${d.text}: ${d.value} (${d.sentiment})`)
+                            .style('visibility', 'visible');
+                        d3.select(event.currentTarget).style('opacity', 0.8);
+                    })
+                    .on('mousemove', (event) => {
+                        // Get coordinates relative to the parent container
+                        if (!containerRef.current) return;
+                        const [x, y] = d3.pointer(event, containerRef.current);
+                        tooltip.style('top', `${y - 30}px`)
+                            .style('left', `${x + 10}px`);
+                    })
+                    .on('mouseout', (event) => {
+                        tooltip.style('visibility', 'hidden');
+                        d3.select(event.currentTarget).style('opacity', 1);
+                    });
+
+                // UPDATE + ENTER (Merge)
+                enterTexts.merge(texts)
+                    .transition()
+                    .duration(800)
+                    .style('font-size', d => `${d.size}px`)
+                    .style('fill', d => getColor(d.sentiment)) // Update color based on sentiment
+                    .attr('transform', d => `translate(${d.x},${d.y}) rotate(${d.rotate})`);
+            }
+        };
+
+        const timer = setTimeout(renderCloud, 100);
 
         // Cleanup
         return () => {
-            d3.select(containerRef.current).selectAll('.word-cloud-tooltip').remove();
-            // d3-cloud doesn't have a built in stop/destroy for the interval if interrupted mid-layout,
-            // but layout.stop() is available in newer versions if it runs asynchronously.
-            if (layout.stop) layout.stop();
+            isMounted = false;
+            clearTimeout(timer);
+            if (containerRef.current) {
+                try {
+                    d3.select(containerRef.current).selectAll('.word-cloud-tooltip').remove();
+                } catch (e) { /* Ignore unmount errors */ }
+            }
+            if (layout && layout.stop) layout.stop();
         };
 
     }, [words, onWordClick]);

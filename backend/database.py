@@ -95,3 +95,4 @@ policies_col = db.policies
 drafts_col = db.drafts
 comments_col = db.comments
 draft_analysis_col = db.draft_analysis
+users_col = db.users

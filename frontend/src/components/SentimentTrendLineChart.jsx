@@ -42,6 +42,7 @@ const SentimentTrendLineChart = ({ data: initialData, policyId, loading: externa
     if (isLoading) return <div className="chart-loading-placeholder"><p>Loading Sentiment Trends...</p></div>;
     if (error) return <div className="error-banner" style={{ padding: '1rem', color: '#EF4444', background: '#fef2f2', borderRadius: '4px' }}>{error}</div>;
     
+    if (!Array.isArray(activeData)) return <div>No chart data available</div>;
     if (!activeData || activeData.length === 0) {
         return <div style={{ padding: '2rem', textAlign: 'center', color: '#6B7280', background: '#f9fafb', borderRadius: '8px' }}>No analysis data available for this policy.</div>;
     }
@@ -77,7 +78,7 @@ const SentimentTrendLineChart = ({ data: initialData, policyId, loading: externa
         <div className="trend-line-container" style={{ background: '#fff', padding: '1.5rem', borderRadius: '8px', border: '1px solid #E5E7EB' }}>
             <h3 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#111827', marginBottom: '1.5rem' }}>Sentiment Evolution Trend</h3>
             <div style={{ width: '100%', height: '350px' }}>
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height={350} minHeight={300}>
                     <LineChart
                         data={chartData}
                         margin={{ top: 10, right: 30, left: 0, bottom: 20 }}

@@ -10,6 +10,7 @@ import {
 } from 'recharts';
 
 const CommentVolumeChart = ({ data, loading }) => {
+    if (!Array.isArray(data)) return <div>No chart data available</div>;
     if (loading) return null;
     if (!data || data.length === 0) return null;
 
@@ -38,7 +39,7 @@ const CommentVolumeChart = ({ data, loading }) => {
         <div className="global-engagement-volume-only">
             <h3 className="section-title">Draft Engagement Volume (Sorted by Influence)</h3>
             <div className="recharts-wrapper-custom">
-                <ResponsiveContainer width="100%" height={sortedData.length * 50 + 40}>
+                <ResponsiveContainer width="100%" height={Math.max(sortedData.length * 50 + 40, 300)} minHeight={300}>
                     <BarChart
                         layout="vertical"
                         data={sortedData}
@@ -53,7 +54,7 @@ const CommentVolumeChart = ({ data, loading }) => {
                         />
                         <YAxis
                             type="category"
-                            dataKey="draft_id"
+                            dataKey="name"
                             tick={<CustomYAxisTick />}
                             axisLine={false}
                             tickLine={false}

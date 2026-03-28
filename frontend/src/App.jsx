@@ -14,6 +14,11 @@ import Home from './components/Home';
 import Login from './components/Login';
 import DraftManagement from './components/DraftManagement';
 
+import LandingPage from './pages/LandingPage';
+import OnboardingForm from './pages/OnboardingForm';
+import ConsumerHome from './pages/ConsumerHome';
+// import DraftManagement from './components/DraftManagement';
+
 // Configure Axios to always send credentials
 axios.defaults.withCredentials = true;
 
@@ -23,6 +28,8 @@ function App() {
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
+  const [stakeholderType, setStakeholderType] = useState('');
 
   const [activeTab, setActiveTab] = useState('home');
   const [metrics, setMetrics] = useState(null);
@@ -35,22 +42,48 @@ function App() {
   // URL Path Synchronization
   useEffect(() => {
     const path = location.pathname;
-    if (path.startsWith('/policy/')) {
-        const id = path.split('/')[2];
+    
+    if (!isAuthChecking) {
+      if (!isAuthenticated && path !== '/') {
+        navigate('/');
+        return;
+      }
+      
+      if (isAuthenticated) {
+        if (needsOnboarding && path !== '/onboarding') {
+          navigate('/onboarding');
+          return;
+        }
+        
+        if (!needsOnboarding) {
+          if (userRole === 'admin' && !path.startsWith('/admin')) {
+            navigate('/admin/dashboard');
+            return;
+          }
+          if (userRole === 'consumer' && path !== '/consumer/home') {
+            navigate('/consumer/home');
+            return;
+          }
+        }
+      }
+    }
+
+    if (path.startsWith('/admin/policy/')) {
+        const id = path.split('/')[3];
         if (id && (!selectedPolicy || selectedPolicy.id !== id)) {
             setSelectedPolicy({ id });
             setActiveTab('policies');
         }
-    } else if (path === '/dashboard') {
+    } else if (path === '/admin/dashboard') {
         setActiveTab('dashboard');
-    } else if (path === '/global') {
+    } else if (path === '/admin/global') {
         setActiveTab('global');
-    } else if (path === '/draftManagement') {
+    } else if (path === '/admin/draftManagement') {
         setActiveTab('draftManagement');
-    } else if (path === '/' || path === '/home') {
+    } else if (path === '/admin/home' || path === '/admin') {
         setActiveTab('home');
     }
-  }, [location.pathname]);
+  }, [location.pathname, isAuthChecking, isAuthenticated, needsOnboarding, userRole]);
 
   useEffect(() => {
     // Check Authentication Status
@@ -60,6 +93,8 @@ function App() {
         if (res.data.isAuthenticated) {
           setIsAuthenticated(true);
           setUserRole(res.data.role || 'user');
+          setNeedsOnboarding(res.data.needsOnboarding || false);
+          setStakeholderType(res.data.stakeholderType || '');
         } else {
           setIsAuthenticated(false);
         }
@@ -80,7 +115,7 @@ function App() {
         setLoading(true);
         const [metricsRes, globalRes] = await Promise.all([
           axios.get('http://localhost:5000/api/dashboard/metrics'),
-          axios.get('http://localhost:5000/api/global/draft-comment-volume')
+          axios.get('http://localhost:5000/api/analytics/global').catch(() => ({data: {volumeData: [], trendData: [], totalComments: 0}}))
         ]);
         setMetrics(metricsRes.data);
         setGlobalData(globalRes.data);
@@ -99,13 +134,20 @@ function App() {
           }
         };
 
-        const MOCK_GLOBAL_DATA = [
-          { draft_id: "D-2026-012", draft_title: "Coastal Protection Regulation", total_comments: 4200, positive_count: 1512, neutral_count: 714, negative_count: 2016, release_order: 12 },
-          { draft_id: "D-2026-011", draft_title: "Electronic ID Standards", total_comments: 1200, positive_count: 804, neutral_count: 300, negative_count: 96, release_order: 11 },
-          { draft_id: "D-2026-010", draft_title: "Public Health Bill v1.2", total_comments: 2450, positive_count: 1200, neutral_count: 857, negative_count: 392, release_order: 10 },
-          { draft_id: "D-2026-009", draft_title: "Urban Transport Policy", total_comments: 1820, positive_count: 600, neutral_count: 928, negative_count: 291, release_order: 9 },
-          { draft_id: "D-2026-008", draft_title: "Data Privacy Framework", total_comments: 3100, positive_count: 1085, neutral_count: 713, negative_count: 1302, release_order: 8 }
-        ];
+        const MOCK_GLOBAL_DATA = {
+            totalComments: 14200,
+            volumeData: [
+                { draft_id: "D-2026-012", name: "Coastal Protection Regulation", total_comments: 4200 },
+                { draft_id: "D-2026-011", name: "Electronic ID Standards", total_comments: 1200 },
+                { draft_id: "D-2026-010", name: "Public Health Bill v1.2", total_comments: 2450 },
+                { draft_id: "D-2026-009", name: "Urban Transport Policy", total_comments: 1820 },
+                { draft_id: "D-2026-008", name: "Data Privacy Framework", total_comments: 3100 }
+            ],
+            trendData: [
+                { name: "Jan", positive: 65, neutral: 20, negative: 15 },
+                { name: "Feb", positive: 68, neutral: 22, negative: 10 }
+            ]
+        };
 
         setMetrics(MOCK_METRICS);
         setGlobalData(MOCK_GLOBAL_DATA);
@@ -125,7 +167,20 @@ function App() {
   }
 
   if (!isAuthenticated) {
-    return <Login />;
+    return <LandingPage />;
+  }
+
+  if (needsOnboarding) {
+    return <OnboardingForm onComplete={(type) => {
+      setStakeholderType(type);
+      setNeedsOnboarding(false);
+      setUserRole('consumer'); 
+      navigate('/consumer/home');
+    }} />;
+  }
+
+  if (userRole === 'consumer') {
+    return <ConsumerHome onLogout={() => window.location.href = 'http://localhost:5000/logout'} />;
   }
 
   if (loading && !metrics) {
@@ -139,13 +194,23 @@ function App() {
   const handleTabChange = (tab) => {
     setActiveTab(tab);
     setSelectedPolicy(null);
-    if (tab === 'home') navigate('/');
-    else navigate(`/${tab}`);
+    if (tab === 'home') navigate('/admin/home');
+    else navigate(`/admin/${tab}`);
+  };
+
+  const handleLogout = async () => {
+    try {
+      await axios.post('http://localhost:5000/api/auth/logout');
+    } catch(e) { console.error('Logout error:', e); }
+    setIsAuthenticated(false);
+    setUserRole('user');
+    setNeedsOnboarding(false);
+    navigate('/');
   };
 
   return (
     <div className="app-container">
-      <Header />
+      <Header onLogout={handleLogout} />
       <div className="main-layout">
         <Sidebar activeTab={activeTab} onTabChange={handleTabChange} />
 
@@ -225,14 +290,14 @@ function App() {
                   userRole={userRole}
                   onBack={() => {
                       setSelectedPolicy(null);
-                      navigate('/policies');
+                      navigate('/admin/policies');
                   }}
                 />
               ) : (
                 <PoliciesList
                   onSelectPolicy={(policy) => {
                       setSelectedPolicy(policy);
-                      navigate(`/policy/${policy.id}`);
+                      navigate(`/admin/policy/${policy.id}`);
                   }}
                 />
               )}
@@ -249,8 +314,8 @@ function App() {
               </div>
 
               <div className="panel-white">
-                <CommentVolumeChart data={globalData} loading={loading} />
-                <SentimentTrendLineChart data={globalData} loading={loading} />
+                <CommentVolumeChart data={globalData.volumeData || []} loading={loading} />
+                <SentimentTrendLineChart data={globalData.trendData || []} loading={loading} />
                 <div className="formal-chart-note">
                   <p>“Higher comment volume indicates increased stakeholder engagement and potential impact of draft provisions.”</p>
                 </div>

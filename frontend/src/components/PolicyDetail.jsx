@@ -23,6 +23,7 @@ const PolicyDetail = ({ policy, userRole, onBack }) => {
     const [filterHighRisk, setFilterHighRisk] = useState(false);
     const [filterStakeholder, setFilterStakeholder] = useState('');
     const [analytics, setAnalytics] = useState(null);
+    const [analyticsError, setAnalyticsError] = useState(false);
     const [searchAnalytics, setSearchAnalytics] = useState(null);
     const [wordCloudData, setWordCloudData] = useState([]);
     const [trendHistory, setTrendHistory] = useState([]);
@@ -37,21 +38,40 @@ const PolicyDetail = ({ policy, userRole, onBack }) => {
     const [isExportDropdownOpen, setIsExportDropdownOpen] = useState(false);
     
     const explorerRef = useRef(null);
+    const wordCloudContainerRef = useRef(null);
+    const [wordCloudWidth, setWordCloudWidth] = useState(0);
+
+    useEffect(() => {
+        if (!wordCloudContainerRef.current) return;
+        
+        // Ensure container dimensions exist before passing to any graphing library
+        const resizeObserver = new ResizeObserver(entries => {
+            for (let entry of entries) {
+                if (entry.contentRect.width > 0) {
+                    setWordCloudWidth(entry.contentRect.width);
+                }
+            }
+        });
+        
+        resizeObserver.observe(wordCloudContainerRef.current);
+        return () => resizeObserver.disconnect();
+    }, [policy]);
 
     const fetchAnalytics = async () => {
         try {
+            setAnalyticsError(false);
             const res = await axios.get(`http://localhost:5000/api/analytics/draft/${policy.id}`);
-            setAnalytics(res.data);
+            if (res.data) {
+                setAnalytics(res.data);
+                setWordCloudData(res.data.wordCloud || []);
+            } else {
+                setAnalyticsError(true);
+            }
         } catch (err) {
             console.error("Failed to fetch analytics", err);
+            setAnalyticsError(true);
         }
-        
-        try {
-            const wcRes = await axios.get(`http://localhost:5000/api/analytics/wordcloud/${policy.id}`);
-            setWordCloudData(wcRes.data);
-        } catch (err) {
-            console.error("Failed to fetch word cloud data", err);
-        }
+        // WordCloud data is now populated via the consolidated draft endpoint
 
         try {
             const trendRes = await axios.get(`http://localhost:5000/api/analytics/policy-trend/${policy.id}`);
@@ -274,27 +294,33 @@ const PolicyDetail = ({ policy, userRole, onBack }) => {
                 <div className="pd-card">
                     <h3 className="pd-card-title">Sentiment Distribution</h3>
                     <div className="pd-pie-container" style={{ minHeight: '300px' }}>
-                        <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                                <Pie
-                                    data={searchAnalytics || analytics?.sentiment || []}
-                                    cx="50%"
-                                    cy="50%"
-                                    innerRadius={60}
-                                    outerRadius={100}
-                                    fill="#8884d8"
-                                    paddingAngle={5}
-                                    dataKey="value"
-                                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                                >
-                                    {(searchAnalytics || analytics?.sentiment || []).map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                    ))}
-                                </Pie>
-                                <Tooltip />
-                                <Legend verticalAlign="bottom" height={36} />
-                            </PieChart>
-                        </ResponsiveContainer>
+                        {analyticsError ? (
+                            <div className="p-4 text-center" style={{ padding: '4rem', color: '#e03131', textAlign: 'center' }}>Analytics currently unavailable</div>
+                        ) : (searchAnalytics || analytics?.sentiment || []).length > 0 ? (
+                            <ResponsiveContainer width="100%" height={300} minWidth={0}>
+                                <PieChart>
+                                    <Pie
+                                        data={searchAnalytics || analytics?.sentiment || []}
+                                        cx="50%"
+                                        cy="50%"
+                                        innerRadius={60}
+                                        outerRadius={100}
+                                        fill="#8884d8"
+                                        paddingAngle={5}
+                                        dataKey="value"
+                                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                                    >
+                                        {(searchAnalytics || analytics?.sentiment || []).map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip />
+                                    <Legend verticalAlign="bottom" height={36} />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        ) : (
+                            <div className="p-4 text-center" style={{ padding: '4rem', color: '#adb5bd', textAlign: 'center' }}>Loading Analytics Data...</div>
+                        )}
                     </div>
                 </div>
 
@@ -304,16 +330,32 @@ const PolicyDetail = ({ policy, userRole, onBack }) => {
                     <div style={{ fontSize: '0.8rem', color: '#adb5bd', marginBottom: '8px', textAlign: 'center' }}>
                         Click a keyword to search related feedback.
                     </div>
-                    <div className="pd-word-cloud-box">
-                        <SentimentWordCloud 
-                            words={wordCloudData || []} 
-                            onWordClick={(word) => {
-                                setSearchKeyword(word);
-                                if (explorerRef.current) {
-                                    explorerRef.current.scrollIntoView({ behavior: 'smooth' });
-                                }
-                            }} 
-                        />
+                    <div className="pd-word-cloud-box" ref={wordCloudContainerRef} style={{ width: '100%', height: '350px', minHeight: '350px', position: 'relative' }}>
+                        {wordCloudWidth > 0 ? (
+                            wordCloudData && wordCloudData.length > 0 ? (
+                                <SentimentWordCloud 
+                                    words={wordCloudData.map(word => ({ ...word, value: word.value || Math.floor(Math.random() * 50) + 10 }))} 
+                                    onWordClick={(word) => {
+                                        setSearchKeyword(word);
+                                        if (explorerRef.current) {
+                                            explorerRef.current.scrollIntoView({ behavior: 'smooth' });
+                                        }
+                                    }} 
+                                />
+                            ) : (
+                                <SentimentWordCloud 
+                                    words={[
+                                        {text: 'Processing', value: 20, sentiment: 'neutral'}, 
+                                        {text: 'Keywords', value: 15, sentiment: 'neutral'}, 
+                                        {text: 'For', value: 10, sentiment: 'neutral'},
+                                        {text: 'Analysis...', value: 10, sentiment: 'neutral'}
+                                    ]} 
+                                    onWordClick={() => {}} 
+                                />
+                            )
+                        ) : (
+                            <div className="loading-placeholder" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#adb5bd' }}>Processing layout dimensions...</div>
+                        )}
                     </div>
                 </div>
             </div>

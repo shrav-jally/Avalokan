@@ -10,3 +10,5 @@ pydantic
 reportlab
 matplotlib
 faker
+spacy
+pandas

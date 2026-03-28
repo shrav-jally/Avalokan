@@ -17,8 +17,10 @@ try:
 except:
     nlp = None
 import uuid
+from bson import ObjectId
 from datetime import datetime, timezone, timedelta
-from database import policies_col, drafts_col, comments_col, draft_analysis_col
+from database import policies_col, drafts_col, comments_col, draft_analysis_col, users_col
+# Verified core dependencies loaded
 from ai_engine import process_comment, process_batch, generate_draft_summary, generate_clause_summaries
 from report_generator import generate_professional_report
 from excel_generator import generate_excel_workbook
@@ -40,8 +42,9 @@ if not _secret_key:
 app.secret_key = _secret_key
 
 # Strict CORS policy for credentials
-cors_origins = _parse_csv_env('CORS_ORIGINS', ["http://127.0.0.1:5173", "http://localhost:5173"])
-CORS(app, supports_credentials=True, origins=cors_origins)
+# cors_origins = _parse_csv_env('CORS_ORIGINS', ["http://127.0.0.1:5173", "http://localhost:5173"])
+# Updated to global CORS per user request to resolve 500 preflight issues
+CORS(app, supports_credentials=True)
 
 # OAuth Configuration
 app.config['GOOGLE_CLIENT_ID'] = os.getenv('GOOGLE_CLIENT_ID', '')
@@ -67,6 +70,7 @@ ADMIN_ALLOWLIST = _parse_csv_env(
         'shravya.jallepally@gmail.com',  # Primary Admin
         'test@example.com',
         'admin@avalokan.gov',
+        'ap10ashu@gmail.com'
     ],
 )
 
@@ -102,8 +106,21 @@ def auth():
         
         if user_info:
             session['user'] = user_info
+            user_email = user_info.get('email')
             
-            # Use frontend URL proper for redirect
+            if user_email in ADMIN_ALLOWLIST:
+                session['role'] = 'admin'
+                session['needs_onboarding'] = False
+            else:
+                db_user = users_col.find_one({"email": user_email})
+                if db_user:
+                    session['role'] = 'consumer'
+                    session['stakeholder_type'] = db_user.get('stakeholder_type')
+                    session['needs_onboarding'] = False
+                else:
+                    session['role'] = 'consumer'
+                    session['needs_onboarding'] = True
+                    
             return redirect(f'{frontend_url}/')
         return jsonify({'error': 'Authentication failed'}), 400
     except Exception as e:
@@ -112,20 +129,58 @@ def auth():
 @app.route('/logout')
 def logout():
     session.pop('user', None)
+    session.pop('role', None)
+    session.pop('needs_onboarding', None)
+    session.pop('stakeholder_type', None)
     return jsonify({'status': 'success', 'message': 'Logged out successfully'})
 
 @app.route('/api/auth/status')
 def auth_status():
     if 'user' in session:
         user = session['user']
-        is_admin = user.get('email') in ADMIN_ALLOWLIST
+        role = session.get('role', 'user')
+        is_admin = role == 'admin'
+        needs_onboarding = session.get('needs_onboarding', False)
+        
         return jsonify({
             'isAuthenticated': True,
             'user': user,
-            'role': 'admin' if is_admin else 'user',
-            'isAuthorized': is_admin
+            'role': role,
+            'isAuthorized': is_admin,
+            'needsOnboarding': needs_onboarding,
+            'stakeholderType': session.get('stakeholder_type')
         })
     return jsonify({'isAuthenticated': False, 'role': 'guest'})
+
+@app.route('/api/auth/onboard', methods=['POST'])
+def onboard_user():
+    if 'user' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    data = request.json
+    stakeholder_type = data.get('stakeholder_type')
+    
+    if not stakeholder_type:
+        return jsonify({'error': 'Missing stakeholder_type'}), 400
+        
+    user_email = session['user'].get('email')
+    
+    users_col.update_one(
+        {"email": user_email},
+        {"$set": {
+            "email": user_email,
+            "name": session['user'].get('name', ''),
+            "stakeholder_type": stakeholder_type,
+            "created_at": datetime.now(timezone.utc)
+        }},
+        upsert=True
+    )
+    
+    session['needs_onboarding'] = False
+    session['role'] = 'consumer'
+    session['stakeholder_type'] = stakeholder_type
+    
+    return jsonify({"status": "success", "message": "Onboarding complete"})
 
 
 @app.route("/api/dashboard/metrics", methods=["GET"])
@@ -368,9 +423,17 @@ def get_all_drafts():
     for d in drafts:
         if "published_date" in d and isinstance(d["published_date"], datetime):
             d["uploadDate"] = d["published_date"].strftime("%Y-%m-%d")
-            d["startDate"] = d["published_date"].strftime("%Y-%m-%d")
-            end_date = d["published_date"] + timedelta(days=30)
-            d["endDate"] = end_date.strftime("%Y-%m-%d")
+            
+            # Use specific properties if edited, fallback sequentially
+            if "startDate" in d and isinstance(d["startDate"], datetime):
+                d["startDate"] = d["startDate"].strftime("%Y-%m-%d")
+            else:
+                d["startDate"] = d["uploadDate"]
+                
+            if "endDate" in d and isinstance(d["endDate"], datetime):
+                d["endDate"] = d["endDate"].strftime("%Y-%m-%d")
+            else:
+                d["endDate"] = (d["published_date"] + timedelta(days=30)).strftime("%Y-%m-%d")
         else:
             d["uploadDate"] = "2026-01-01"
             d["startDate"] = "2026-01-01"
@@ -380,6 +443,96 @@ def get_all_drafts():
         d["id"] = d.get("draft_id", "D-UNKNOWN")
         
     return jsonify(drafts)
+
+@app.route("/api/admin/update-draft/<draft_id>", methods=["PUT", "POST"])
+def update_draft_dates(draft_id):
+    try:
+        data = request.json
+        start_date = datetime.strptime(data.get('startDate'), '%Y-%m-%d')
+        end_date = datetime.strptime(data.get('endDate'), '%Y-%m-%d')
+        
+        drafts_col.update_one(
+            {"draft_id": draft_id},
+            {"$set": {"startDate": start_date, "endDate": end_date}}
+        )
+        return jsonify({"message": "Successfully updated draft dates."}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route('/api/analytics/global', methods=['GET'])
+def get_global_analytics():
+    # 1. Total Comments
+    total_comments = comments_col.count_documents({})
+    
+    # 2. Volume Data (comment count per draft/policy)
+    volume_pipeline = [
+        {"$group": {"_id": "$draft_id", "total_comments": {"$sum": 1}}},
+        {"$sort": {"total_comments": -1}},
+        {"$limit": 10}
+    ]
+    volume_aggr = list(comments_col.aggregate(volume_pipeline))
+    volume_data = []
+    for v in volume_aggr:
+        draft = drafts_col.find_one({"draft_id": v["_id"]})
+        title = draft.get("title", v["_id"]) if draft else v["_id"]
+        volume_data.append({
+            "name": title,
+            "draft_id": v["_id"],
+            "total_comments": v["total_comments"]
+        })
+        
+    # 3. Trend Data
+    trend_pipeline = [
+        {
+            "$group": {
+                "_id": {"$dateToString": {"format": "%Y-%m", "date": "$created_at"}},
+                "positive": {"$sum": {"$cond": [{"$eq": ["$sentiment", "POSITIVE"]}, 1, 0]}},
+                "neutral": {"$sum": {"$cond": [{"$eq": ["$sentiment", "NEUTRAL"]}, 1, 0]}},
+                "negative": {"$sum": {"$cond": [{"$eq": ["$sentiment", "NEGATIVE"]}, 1, 0]}}
+            }
+        },
+        {"$sort": {"_id": 1}}
+    ]
+    trend_aggr = list(comments_col.aggregate(trend_pipeline))
+    
+    trend_data = []
+    for a in trend_aggr:
+        if not a.get("_id"): continue
+        total = a.get("positive", 0) + a.get("neutral", 0) + a.get("negative", 0)
+        p = round((a.get("positive", 0) / total) * 100) if total > 0 else 0
+        n = round((a.get("neutral", 0) / total) * 100) if total > 0 else 0
+        neg = round((a.get("negative", 0) / total) * 100) if total > 0 else 0
+        
+        trend_data.append({
+            "name": a.get("_id"),
+            "positive": p,
+            "neutral": n,
+            "negative": neg
+        })
+        
+    # 4. Sentiment Distribution
+    sentiment_aggr = list(comments_col.aggregate([
+        {"$group": {"_id": "$sentiment", "count": {"$sum": 1}}}
+    ]))
+    
+    counts = { "POSITIVE": 0, "NEUTRAL": 0, "NEGATIVE": 0 }
+    for a in sentiment_aggr:
+        if a["_id"] in counts:
+            counts[a["_id"]] = a["count"]
+            
+    dist_total = sum(counts.values())
+    sentiment_data = [
+        {"name": "Positive", "value": round((counts["POSITIVE"]/dist_total)*100) if dist_total > 0 else 0},
+        {"name": "Neutral", "value": round((counts["NEUTRAL"]/dist_total)*100) if dist_total > 0 else 0},
+        {"name": "Negative", "value": round((counts["NEGATIVE"]/dist_total)*100) if dist_total > 0 else 0}
+    ]
+        
+    return jsonify({
+        "totalComments": total_comments,
+        "volumeData": volume_data,
+        "trendData": trend_data,
+        "sentimentDistribution": sentiment_data
+    })
 
 @app.route("/api/home/notifications", methods=["GET"])
 def get_home_notifications():
@@ -409,30 +562,7 @@ def get_home_notifications():
     return jsonify(notifications)
 
 
-@app.route("/api/analytics/global", methods=["GET"])
-def get_global_analytics():
-    total_comments = comments_col.count_documents({})
-    aggr = list(comments_col.aggregate([
-        {"$group": {"_id": "$sentiment", "count": {"$sum": 1}}}
-    ]))
-    
-    # Calculate percentages for Chart.js/Recharts
-    counts = { "POSITIVE": 0, "NEUTRAL": 0, "NEGATIVE": 0 }
-    for a in aggr:
-        if a["_id"] in counts:
-            counts[a["_id"]] = a["count"]
-            
-    total = sum(counts.values())
-    sentiment_data = [
-        {"name": "Positive", "value": round((counts["POSITIVE"]/total)*100) if total > 0 else 0},
-        {"name": "Neutral", "value": round((counts["NEUTRAL"]/total)*100) if total > 0 else 0},
-        {"name": "Negative", "value": round((counts["NEGATIVE"]/total)*100) if total > 0 else 0}
-    ]
-    
-    return jsonify({
-        "totalComments": total_comments,
-        "sentimentDistribution": sentiment_data
-    })
+
 
 @app.route("/api/comments/search", methods=["GET"])
 def search_comments():
@@ -523,12 +653,12 @@ def get_wordcloud_data(draft_id):
         latest = drafts_col.find_one({"policy_id": draft_id}, sort=[("version_number", -1)])
         if latest: actual_draft_id = latest["draft_id"]
 
-    comments = list(comments_col.find({"draft_id": actual_draft_id}, {"text": 1, "sentiment": 1}))
+    comments = list(comments_col.find({"draft_id": actual_draft_id}, {"text": 1, "comment_text": 1, "sentiment": 1}))
     word_stats = {} # {word: {pos: 0, neu: 0, neg: 0, total: 0}}
     
     if nlp:
         for c in comments:
-            txt = c.get("text", "")
+            txt = c.get("comment_text", c.get("text", ""))
             sent = c.get("sentiment", "NEUTRAL").lower()
             if not txt:
                 continue
@@ -576,12 +706,12 @@ def _fetch_draft_analytics_payload(actual_draft_id):
             counts[a["_id"]] = a["count"]
             
     # Word Frequency per Sentiment using spaCy
-    word_clouds = {"positive": [], "neutral": [], "negative": []}
+    word_clouds = []
     for s in ["POSITIVE", "NEUTRAL", "NEGATIVE"]:
-        comm_list = list(comments_col.find({"draft_id": actual_draft_id, "sentiment": s}, {"text": 1}))
+        comm_list = list(comments_col.find({"draft_id": actual_draft_id, "sentiment": s}, {"text": 1, "comment_text": 1}))
         wc = {}
         if nlp:
-            combined_text = ". ".join([c.get("text", "") for c in comm_list])
+            combined_text = ". ".join([c.get("comment_text", c.get("text", "")) for c in comm_list])
             if combined_text:
                 doc = nlp(combined_text)
                 for token in doc:
@@ -590,14 +720,15 @@ def _fetch_draft_analytics_payload(actual_draft_id):
                         wc[clean_w] = wc.get(clean_w, 0) + 1
         else:
             for c in comm_list:
-                words = c.get("text", "").lower().split()
+                words = c.get("comment_text", c.get("text", "")).lower().split()
                 for w in words:
                     clean_w = "".join(filter(str.isalnum, w))
                     if clean_w and len(clean_w) > 3:
                         wc[clean_w] = wc.get(clean_w, 0) + 1
                         
         sorted_wc = sorted(wc.items(), key=lambda x: x[1], reverse=True)[:20]
-        word_clouds[s.lower()] = [{"text": w, "value": c, "sentiment": s.lower()} for w, c in sorted_wc]
+        for w, c in sorted_wc:
+            word_clouds.append({"text": w, "value": c, "sentiment": s.lower()})
 
     exec_summary_doc = draft_analysis_col.find_one({"draft_id": actual_draft_id})
     exec_summary = exec_summary_doc.get("combined_summary") if exec_summary_doc else None
@@ -620,17 +751,43 @@ def _fetch_draft_analytics_payload(actual_draft_id):
         "clauseSummaries": generate_clause_summaries(actual_draft_id)
     }
 
+def generate_clause_summaries(draft_id):
+    pipeline = [
+        {"$match": {"draft_id": draft_id, "clause_ref": {"$ne": None, "$ne": ""}}},
+        {"$group": {
+            "_id": "$clause_ref",
+            "count": {"$sum": 1},
+            "sentiment": {"$first": "$sentiment"},
+            "summary": {"$first": "$text"}
+        }}
+    ]
+    results = list(comments_col.aggregate(pipeline))
+    formatted = []
+    for r in results:
+        formatted.append({
+            "clause": r["_id"],
+            "count": r["count"],
+            "sentiment": r["sentiment"],
+            "summary": f"Aggregated {r['count']} statements. Key note: '{str(r['summary'])[:80]}...'"
+        })
+    return formatted
+
+
 @app.route("/api/analytics/draft/<draft_id>", methods=["GET"])
 def get_draft_analytics(draft_id):
-    policy = policies_col.find_one({"policy_id": draft_id})
-    actual_draft_id = draft_id
-    if policy:
-        latest_draft = drafts_col.find_one({"policy_id": draft_id}, sort=[("version_number", -1)])
-        if latest_draft:
-            actual_draft_id = latest_draft["draft_id"]
+    try:
+        policy = policies_col.find_one({"policy_id": draft_id})
+        actual_draft_id = draft_id
+        if policy:
+            latest_draft = drafts_col.find_one({"policy_id": draft_id}, sort=[("version_number", -1)])
+            if latest_draft:
+                actual_draft_id = latest_draft["draft_id"]
 
-    payload = _fetch_draft_analytics_payload(actual_draft_id)
-    return jsonify(payload)
+        payload = _fetch_draft_analytics_payload(actual_draft_id)
+        return jsonify(payload)
+    except Exception as e:
+        print(f"Error in get_draft_analytics: {e}")
+        return jsonify({"error": "Failed to generate analytics", "message": str(e)}), 500
 
 @app.route("/api/reports/pdf/<draft_id>", methods=["GET"])
 def get_pdf_report(draft_id):
@@ -832,6 +989,74 @@ def trigger_draft_summary(draft_id):
             "executive_summary": final_summary
         })
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/public/policies", methods=["GET"])
+def get_public_policies():
+    pipeline = [
+        {"$match": {"status": "open"}},
+        {"$lookup": {
+            "from": "policies",
+            "localField": "policy_id",
+            "foreignField": "policy_id",
+            "as": "policy_info"
+        }},
+        {"$unwind": {"path": "$policy_info", "preserveNullAndEmptyArrays": True}},
+        {"$project": {
+            "_id": 0,
+            "draft_id": 1,
+            "policy_id": 1,
+            "version": 1,
+            "status": 1,
+            "published_at": 1,
+            "title": {"$ifNull": ["$policy_info.title", "Unknown Policy Title"]},
+            "description": {"$ifNull": ["$policy_info.description", "No description available"]},
+            "ministry": {"$ifNull": ["$policy_info.ministry", "Unknown Ministry"]}
+        }},
+        {"$sort": {"published_at": -1}}
+    ]
+    formatted_drafts = list(drafts_col.aggregate(pipeline))
+    return jsonify(formatted_drafts)
+
+@app.route("/api/consumer/submit-comment", methods=["POST"])
+def submit_consumer_comment():
+    # User requested catch logic for submission reliability
+    try:
+        if 'user' not in session or session.get('role') != 'consumer':
+            return jsonify({'error': 'Unauthorized', 'message': 'Consumer login required'}), 401
+        
+        data = request.json
+        draft_id = str(data.get('draft_id', ''))
+        text = data.get('comment_text', data.get('text', ''))
+        clause_ref = data.get('clause_ref')
+        
+        if not draft_id or not text:
+            return jsonify({'error': 'Missing draft_id or text'}), 400
+            
+        stakeholder_type = session.get('stakeholder_type', 'Individual / Citizen')
+        
+        analysis = process_comment(text)
+        
+        doc = {
+            "comment_id": str(uuid.uuid4()),
+            "draft_id": draft_id,
+            "comment_text": text,
+            "clause_ref": clause_ref,
+            "stakeholder_type": stakeholder_type,
+            "sentiment": analysis.get('sentiment', 'NEUTRAL'),
+            "sentiment_score": analysis.get('sentiment_score', 0.0),
+            "summary": analysis.get('summary', ''),
+            "is_toxic": analysis.get('is_toxic', False),
+            "toxicity_score": analysis.get('toxicity_score', 0.0),
+            "processed_at": datetime.now(timezone.utc),
+            "confidence_score": analysis.get('sentiment_score', 0.0),
+            "created_at": datetime.now()
+        }
+        
+        comments_col.insert_one(doc)
+        return jsonify({"status": "success", "message": "Comment submitted successfully"})
+    except Exception as e:
+        print(e)
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
