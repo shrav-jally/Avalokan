@@ -8,6 +8,7 @@ except Exception:  # pragma: no cover
     load_dotenv = None
 
 from flask import Flask, jsonify, session, url_for, redirect, request
+from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
 from authlib.integrations.flask_client import OAuth
 from functools import wraps
@@ -87,52 +88,177 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# Auth Routes
+# ── Auth Routes ──────────────────────────────────────────
+
+# --- Local Signup ---
+@app.route('/api/auth/signup', methods=['POST'])
+def api_signup():
+    try:
+        data = request.json
+        name = data.get('name', '').strip()
+        email = data.get('email', '').strip().lower()
+        password = data.get('password', '')
+        stakeholder_type = data.get('stakeholder_type', '')
+
+        if not all([name, email, password, stakeholder_type]):
+            return jsonify({'error': 'All fields are required.'}), 400
+
+        if len(password) < 6:
+            return jsonify({'error': 'Password must be at least 6 characters.'}), 400
+
+        if users_col.find_one({'email': email}):
+            return jsonify({'error': 'An account with this email already exists.'}), 409
+
+        pw_hash = generate_password_hash(password)
+        user_doc = {
+            'email': email,
+            'password_hash': pw_hash,
+            'name': name,
+            'stakeholder_type': stakeholder_type,
+            'role': 'consumer',
+            'auth_method': 'local',
+            'created_at': datetime.now(timezone.utc)
+        }
+        users_col.insert_one(user_doc)
+
+        # Auto-login after signup
+        session['user'] = {'email': email, 'name': name}
+        session['role'] = 'consumer'
+        session['stakeholder_type'] = stakeholder_type
+        session['needs_onboarding'] = False
+
+        return jsonify({'status': 'success', 'message': 'Account created successfully.'}), 201
+    except Exception as e:
+        print(f"Signup error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# --- Local Login (Admin + Consumer) ---
+@app.route('/api/auth/login', methods=['POST'])
+def api_login():
+    try:
+        data = request.json
+        email = data.get('email', '').strip().lower()
+        password = data.get('password', '')
+        requested_role = data.get('role', 'consumer')  # 'admin' or 'consumer'
+
+        if not email or not password:
+            return jsonify({'error': 'Email and password are required.'}), 400
+
+        # Check if admin credentials
+        if requested_role == 'admin':
+            if email not in [a.lower() for a in ADMIN_ALLOWLIST]:
+                return jsonify({'error': 'Access denied. This account is not on the admin allowlist.'}), 403
+            # Try DB-based password first
+            db_user = users_col.find_one({'email': email})
+            if db_user and db_user.get('password_hash'):
+                if not check_password_hash(db_user['password_hash'], password):
+                    return jsonify({'error': 'Incorrect password.'}), 401
+            # If no local account, reject (must use Google or set up account)
+            elif not db_user:
+                return jsonify({'error': 'No local account found. Please use Google login or contact your administrator.'}), 404
+
+            session['user'] = {'email': email, 'name': db_user.get('name', email)}
+            session['role'] = 'admin'
+            session['needs_onboarding'] = False
+            return jsonify({'status': 'success', 'role': 'admin'})
+
+        # Consumer local login
+        db_user = users_col.find_one({'email': email})
+        if not db_user:
+            return jsonify({'error': 'No account found with this email. Please register first.'}), 404
+
+        if not db_user.get('password_hash'):
+            return jsonify({'error': 'This account was created with Google. Please use the Google login button.'}), 400
+
+        if not check_password_hash(db_user['password_hash'], password):
+            return jsonify({'error': 'Incorrect password.'}), 401
+
+        session['user'] = {'email': email, 'name': db_user.get('name', '')}
+        session['role'] = 'consumer'
+        session['stakeholder_type'] = db_user.get('stakeholder_type', '')
+        session['needs_onboarding'] = not bool(db_user.get('stakeholder_type'))
+
+        return jsonify({'status': 'success', 'role': 'consumer'})
+    except Exception as e:
+        print(f"Login error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# --- Google OAuth: Admin path ---
+@app.route('/auth/google/admin')
+def google_login_admin():
+    session['oauth_intent'] = 'admin'
+    redirect_uri = url_for('auth_callback', _external=True)
+    return google.authorize_redirect(redirect_uri)
+
+# --- Google OAuth: Consumer path ---
+@app.route('/auth/google/consumer')
+def google_login_consumer():
+    session['oauth_intent'] = 'consumer'
+    redirect_uri = url_for('auth_callback', _external=True)
+    return google.authorize_redirect(redirect_uri)
+
+# Legacy /login route kept for backward compatibility
 @app.route('/login')
 def login():
-    if not app.config.get('GOOGLE_CLIENT_ID') or not app.config.get('GOOGLE_CLIENT_SECRET'):
-        return jsonify({
-            'error': 'OAuth is not configured',
-            'message': 'Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in backend/.env'
-        }), 500
-    redirect_uri = url_for('auth', _external=True)
+    session['oauth_intent'] = 'consumer'
+    redirect_uri = url_for('auth_callback', _external=True)
     return google.authorize_redirect(redirect_uri)
 
 @app.route('/auth/callback')
-def auth():
+def auth_callback():
     try:
         token = google.authorize_access_token()
         user_info = token.get('userinfo')
-        
-        if user_info:
-            session['user'] = user_info
-            user_email = user_info.get('email')
-            
-            if user_email in ADMIN_ALLOWLIST:
-                session['role'] = 'admin'
-                session['needs_onboarding'] = False
+
+        if not user_info:
+            return jsonify({'error': 'Authentication failed'}), 400
+
+        user_email = user_info.get('email', '').lower()
+        intent = session.pop('oauth_intent', 'consumer')
+
+        session['user'] = user_info
+
+        if intent == 'admin':
+            if user_email not in [a.lower() for a in ADMIN_ALLOWLIST]:
+                session.clear()
+                return redirect(f'{frontend_url}/?error=admin_access_denied')
+            session['role'] = 'admin'
+            session['needs_onboarding'] = False
+        else:
+            # Consumer Google login/signup
+            db_user = users_col.find_one({'email': user_email})
+            if db_user:
+                session['role'] = 'consumer'
+                session['stakeholder_type'] = db_user.get('stakeholder_type', '')
+                session['needs_onboarding'] = not bool(db_user.get('stakeholder_type'))
+                # Update auth_method to google if not set
+                if db_user.get('auth_method') != 'google':
+                    users_col.update_one({'email': user_email}, {'$set': {'auth_method': 'google'}})
             else:
-                db_user = users_col.find_one({"email": user_email})
-                if db_user:
-                    session['role'] = 'consumer'
-                    session['stakeholder_type'] = db_user.get('stakeholder_type')
-                    session['needs_onboarding'] = False
-                else:
-                    session['role'] = 'consumer'
-                    session['needs_onboarding'] = True
-                    
-            return redirect(f'{frontend_url}/')
-        return jsonify({'error': 'Authentication failed'}), 400
+                # New Google user — create account, needs stakeholder selection
+                users_col.insert_one({
+                    'email': user_email,
+                    'password_hash': None,
+                    'name': user_info.get('name', ''),
+                    'stakeholder_type': '',
+                    'role': 'consumer',
+                    'auth_method': 'google',
+                    'created_at': datetime.now(timezone.utc)
+                })
+                session['role'] = 'consumer'
+                session['needs_onboarding'] = True
+
+        return redirect(f'{frontend_url}/')
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        print(f"OAuth callback error: {e}")
+        return redirect(f'{frontend_url}/?error=oauth_failed')
 
 @app.route('/logout')
+@app.route('/api/auth/logout', methods=['GET', 'POST'])
 def logout():
-    session.pop('user', None)
-    session.pop('role', None)
-    session.pop('needs_onboarding', None)
-    session.pop('stakeholder_type', None)
+    session.clear()
     return jsonify({'status': 'success', 'message': 'Logged out successfully'})
+
 
 @app.route('/api/auth/status')
 def auth_status():
@@ -188,42 +314,37 @@ def get_metrics():
     total_drafts = drafts_col.count_documents({})
     active_consultations = drafts_col.count_documents({"status": "open"})
 
-    # Aggregate sentiment distribution from the DraftAnalysis cache
-    cache_aggr = list(draft_analysis_col.aggregate([
+    # Always count directly from the live comments collection so new
+    # consumer submissions (not yet AI-processed) are included.
+    total_comments = comments_col.count_documents({})
+
+    # Sentiment breakdown from live comments collection (no cache dependency)
+    sentiment_aggr = list(comments_col.aggregate([
         {"$group": {
-            "_id": None,
-            "totalComments": {"$sum": "$comment_count"},
-            "pos": {"$sum": "$sentiment_counts.POSITIVE"},
-            "neu": {"$sum": "$sentiment_counts.NEUTRAL"},
-            "neg": {"$sum": "$sentiment_counts.NEGATIVE"}
+            "_id": "$sentiment",
+            "count": {"$sum": 1}
         }}
     ]))
-    
-    if cache_aggr:
-        data_point = cache_aggr[0]
-        total_comments = data_point.get("totalComments", 0)
-        pos = data_point.get("pos", 0)
-        neu = data_point.get("neu", 0)
-        neg = data_point.get("neg", 0)
-        
-        total_sent = pos + neu + neg
-        if total_sent > 0:
-            pos_pct = round((pos / total_sent) * 100)
-            neu_pct = round((neu / total_sent) * 100)
-            neg_pct = round((neg / total_sent) * 100)
-        else: pos_pct = neu_pct = neg_pct = 0
+    counts = {"POSITIVE": 0, "NEUTRAL": 0, "NEGATIVE": 0}
+    for a in sentiment_aggr:
+        s = a.get("_id")
+        if s and s in counts:
+            counts[s] = a["count"]
+
+    total_sent = sum(counts.values())
+    if total_sent > 0:
+        pos_pct = round((counts["POSITIVE"] / total_sent) * 100)
+        neu_pct = round((counts["NEUTRAL"]  / total_sent) * 100)
+        neg_pct = round((counts["NEGATIVE"] / total_sent) * 100)
     else:
-        # Fallback if no cache exists yet
-        total_comments = 0
         pos_pct = neu_pct = neg_pct = 0
-    
-    data = {
+
+    return jsonify({
         "totalDrafts": total_drafts,
         "totalComments": total_comments,
         "activeConsultations": active_consultations,
         "sentimentDistribution": {"positive": pos_pct, "neutral": neu_pct, "negative": neg_pct}
-    }
-    return jsonify(data)
+    })
 
 @app.route('/api/dashboard/detailed-metrics', methods=['GET'])
 def get_detailed_metrics():
@@ -289,10 +410,18 @@ def get_policies():
     policies = list(policies_col.find({}, {"_id": 0}).sort("created_at", -1))
     data = []
     for p in policies:
+        pid = p.get("policy_id")
+        # Resolve the latest draft_id so the Admin PolicyDetail can query
+        # comments using the exact same key the Consumer uses when submitting.
+        latest_draft = drafts_col.find_one(
+            {"policy_id": pid},
+            sort=[("version_number", -1)]
+        )
         data.append({
-            "id": p.get("policy_id"),
+            "id": pid,
             "title": p.get("title"),
-            "summary": p.get("summary")
+            "summary": p.get("summary"),
+            "latest_draft_id": latest_draft.get("draft_id") if latest_draft else None
         })
     return jsonify(data)
 
@@ -441,6 +570,13 @@ def get_all_drafts():
             
         # UI expects "id" not "draft_id" or consistent with draft_id
         d["id"] = d.get("draft_id", "D-UNKNOWN")
+
+        # Emit closed_at as ISO string for frontend date comparisons
+        if "closed_at" in d and isinstance(d["closed_at"], datetime):
+            d["closed_at"] = d["closed_at"].isoformat()
+        elif "endDate" in d and isinstance(d.get("endDate"), str):
+            # If no explicit closed_at, treat endDate as the closing boundary
+            d.setdefault("closed_at", d["endDate"])
         
     return jsonify(drafts)
 
@@ -448,14 +584,26 @@ def get_all_drafts():
 def update_draft_dates(draft_id):
     try:
         data = request.json
-        start_date = datetime.strptime(data.get('startDate'), '%Y-%m-%d')
-        end_date = datetime.strptime(data.get('endDate'), '%Y-%m-%d')
-        
+        updates = {}
+
+        # Handle date updates (optional)
+        if data.get('startDate'):
+            updates['startDate'] = datetime.strptime(data['startDate'], '%Y-%m-%d')
+        if data.get('endDate'):
+            updates['endDate'] = datetime.strptime(data['endDate'], '%Y-%m-%d')
+
+        # Handle status toggle (open / closed)
+        if 'status' in data:
+            updates['status'] = data['status']
+
+        if not updates:
+            return jsonify({'error': 'No valid fields to update'}), 400
+
         drafts_col.update_one(
             {"draft_id": draft_id},
-            {"$set": {"startDate": start_date, "endDate": end_date}}
+            {"$set": updates}
         )
-        return jsonify({"message": "Successfully updated draft dates."}), 200
+        return jsonify({"message": "Draft updated successfully."}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
@@ -606,7 +754,11 @@ def search_comments():
         query["is_toxic"] = True
         
     if keyword:
-        query["text"] = {"$regex": keyword, "$options": "i"}
+        # Match against both field names used across comment sources
+        query["$or"] = [
+            {"comment_text": {"$regex": keyword, "$options": "i"}},
+            {"text": {"$regex": keyword, "$options": "i"}}
+        ]
         
     # 3. Execute
     total_count = comments_col.count_documents(query)
@@ -991,8 +1143,8 @@ def trigger_draft_summary(draft_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route("/api/public/policies", methods=["GET"])
-def get_public_policies():
+@app.route("/api/consumer/drafts", methods=["GET"])
+def get_consumer_drafts():
     pipeline = [
         {"$match": {"status": "open"}},
         {"$lookup": {
@@ -1020,41 +1172,34 @@ def get_public_policies():
 
 @app.route("/api/consumer/submit-comment", methods=["POST"])
 def submit_consumer_comment():
-    # User requested catch logic for submission reliability
+    print("Received Form Submission Attempt")
     try:
-        if 'user' not in session or session.get('role') != 'consumer':
-            return jsonify({'error': 'Unauthorized', 'message': 'Consumer login required'}), 401
-        
         data = request.json
+        print("Received Comment:", data)
         draft_id = str(data.get('draft_id', ''))
-        text = data.get('comment_text', data.get('text', ''))
-        clause_ref = data.get('clause_ref')
+        comment_text = data.get('comment_text', '')
+        stakeholder_type = data.get('stakeholder_type', 'Citizen / NGO')
         
-        if not draft_id or not text:
-            return jsonify({'error': 'Missing draft_id or text'}), 400
+        if not draft_id or not comment_text:
+            return jsonify({'error': 'Missing draft_id or comment_text'}), 400
             
-        stakeholder_type = session.get('stakeholder_type', 'Individual / Citizen')
-        
-        analysis = process_comment(text)
-        
         doc = {
             "comment_id": str(uuid.uuid4()),
             "draft_id": draft_id,
-            "comment_text": text,
-            "clause_ref": clause_ref,
+            "comment_text": comment_text,
             "stakeholder_type": stakeholder_type,
-            "sentiment": analysis.get('sentiment', 'NEUTRAL'),
-            "sentiment_score": analysis.get('sentiment_score', 0.0),
-            "summary": analysis.get('summary', ''),
-            "is_toxic": analysis.get('is_toxic', False),
-            "toxicity_score": analysis.get('toxicity_score', 0.0),
+            "sentiment": "NEUTRAL",
+            "sentiment_score": 0.5,
+            "summary": "",
+            "is_toxic": False,
+            "toxicity_score": 0.0,
             "processed_at": datetime.now(timezone.utc),
-            "confidence_score": analysis.get('sentiment_score', 0.0),
+            "confidence_score": 0.5,
             "created_at": datetime.now()
         }
         
         comments_col.insert_one(doc)
-        return jsonify({"status": "success", "message": "Comment submitted successfully"})
+        return jsonify({"status": "success", "message": "Comment submitted successfully"}), 201
     except Exception as e:
         print(e)
         return jsonify({"error": str(e)}), 500

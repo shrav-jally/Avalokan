@@ -92,11 +92,24 @@ const PolicyDetail = ({ policy, userRole, onBack }) => {
         const fetchComments = async () => {
             setLoadingComments(true);
             try {
-                const params = { 
-                    policy_id: policy.id, 
-                    limit: 1000,
-                    skip: 0
-                };
+                const params = { limit: 1000, skip: 0 };
+
+                // Resolution priority (most specific → least specific):
+                // 1. policy.draft_id     — set when admin opens from DraftManagement
+                // 2. policy.latest_draft_id — now returned by /api/policies, resolves
+                //    to the same draft_id the consumer used when submitting
+                // 3. policy_id fallback  — backend will do its own find_one lookup
+                if (policy.draft_id) {
+                    params.draft_id = policy.draft_id;
+                    console.log("[PolicyDetail] Fetching comments for draft_id:", policy.draft_id);
+                } else if (policy.latest_draft_id) {
+                    params.draft_id = policy.latest_draft_id;
+                    console.log("[PolicyDetail] Fetching comments for latest_draft_id:", policy.latest_draft_id);
+                } else {
+                    params.policy_id = policy.id;
+                    console.log("[PolicyDetail] Fetching comments for policy_id:", policy.id);
+                }
+
                 if (searchKeyword.trim()) params.keyword = searchKeyword.trim();
                 
                 if (filterHighRisk) {
@@ -117,9 +130,14 @@ const PolicyDetail = ({ policy, userRole, onBack }) => {
             }
         };
 
-        // 500ms Debounce
-        const timer = setTimeout(fetchComments, 500);
-        return () => clearTimeout(timer);
+        // Fire immediately if no keyword search, otherwise debounce 500ms
+        if (!searchKeyword.trim()) {
+            fetchComments();
+            return () => {};
+        } else {
+            const timer = setTimeout(fetchComments, 500);
+            return () => clearTimeout(timer);
+        }
     }, [policy, searchKeyword, filterSentiment, filterHighRisk, filterStakeholder]);
 
     const handleResetFilters = () => {
@@ -589,8 +607,8 @@ const PolicyDetail = ({ policy, userRole, onBack }) => {
                                                 {comment.stakeholder_type || 'General'}
                                             </td>
                                             <td style={{ padding: '12px', maxWidth: '400px' }}>
-                                                <div style={{ fontSize: '0.9rem', color: '#212529', marginBottom: '4px' }}>"{comment.text}"</div>
-                                                {comment.summary && comment.summary !== comment.text && (
+                                                <div style={{ fontSize: '0.9rem', color: '#212529', marginBottom: '4px' }}>"{ comment.comment_text || comment.text || '(no text)' }"</div>
+                                                {comment.summary && comment.summary !== comment.comment_text && comment.summary !== comment.text && (
                                                     <div style={{ fontSize: '0.8rem', color: '#868e96', fontStyle: 'italic' }}>
                                                         Summary: {comment.summary}
                                                     </div>

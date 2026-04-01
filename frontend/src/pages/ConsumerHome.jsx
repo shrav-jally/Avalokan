@@ -11,7 +11,7 @@ const ConsumerHome = ({ onLogout }) => {
     const [success, setSuccess] = useState(false);
 
     useEffect(() => {
-        axios.get('http://localhost:5000/api/public/policies')
+        axios.get('http://localhost:5000/api/consumer/drafts')
             .then(res => setPolicies(res.data))
             .catch(console.error)
             .finally(() => setLoading(false));
@@ -20,19 +20,36 @@ const ConsumerHome = ({ onLogout }) => {
     const submitComment = async () => {
         if (!commentText) return;
         setSubmitting(true);
-        const draftId = selectedPolicy.latest_draft_id || selectedPolicy.id || selectedPolicy.policy_id;
+
+        // Priority: draft_id (exact DB field from /api/consumer/drafts pipeline)
+        // This is the versioned draft identifier (e.g. D-2026-012) that the
+        // Comment collection and Admin PolicyDetail both use as the join key.
+        const draftId = selectedPolicy.draft_id
+                     || selectedPolicy.latest_draft_id
+                     || selectedPolicy.id
+                     || selectedPolicy.policy_id;
+
+        console.log("[ConsumerHome] Submitting comment for draft_id:", draftId,
+                    "| Policy object:", JSON.stringify(selectedPolicy, null, 2));
+
         try {
-            await axios.post('http://localhost:5000/api/consumer/submit-comment', {
+            const res = await axios.post('http://localhost:5000/api/consumer/submit-comment', {
                 draft_id: String(draftId),
-                text: commentText,
-                comment_text: commentText,
-                clause_ref: clauseRef
+                stakeholder_type: "Citizen / NGO",
+                comment_text: commentText
             });
-            setSuccess(true);
-            setCommentText('');
-            setClauseRef('');
+            
+            if (res.status === 201 || res.status === 200) {
+                console.log("[ConsumerHome] Success response:", res.data);
+                setSuccess(true);
+                setCommentText('');
+                setClauseRef('');
+            } else {
+                alert("Failed to submit comment. Unexpected Status: " + res.status);
+            }
         } catch(e) {
-            console.error(e.response?.data || e);
+            console.error("[ConsumerHome] Submission error:", e.response?.data || e);
+            alert("Submission error: " + (e.response?.data?.error || e.message));
         } finally {
             setSubmitting(false);
         }
@@ -78,7 +95,7 @@ const ConsumerHome = ({ onLogout }) => {
                                             <div className="policy-content">
                                                 <div className="policy-header" style={{ marginBottom: '0.25rem' }}>
                                                     <span className="policy-status">ACTIVE</span>
-                                                    <span>{draft.created_at ? new Date(draft.created_at).toLocaleDateString() : 'N/A'}</span>
+                                                    <span>{draft.ministry} &bull; {draft.published_at ? new Date(draft.published_at).toLocaleDateString() : 'N/A'}</span>
                                                 </div>
                                                 <h3 className="policy-title">{draft.title}</h3>
                                                 <p className="policy-summary">{draft.summary || draft.description || 'No description available.'}</p>
@@ -98,7 +115,9 @@ const ConsumerHome = ({ onLogout }) => {
                             <div className="panel-white" style={{ marginBottom: '2rem' }}>
                                 <div className="detail-meta">
                                     <span className="policy-badge">Active Consultation</span>
-                                    <span className="policy-id-large">{selectedPolicy.latest_draft_id || selectedPolicy.id || selectedPolicy.policy_id}</span>
+                                    <span className="policy-id-large">
+                                        Draft ID: {selectedPolicy.draft_id || selectedPolicy.latest_draft_id || selectedPolicy.id || selectedPolicy.policy_id}
+                                    </span>
                                 </div>
                                 <h1 className="detail-title">{selectedPolicy.title}</h1>
                                 <p className="detail-summary" style={{ marginTop: '1rem', whiteSpace: 'pre-wrap' }}>

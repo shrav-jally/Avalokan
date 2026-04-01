@@ -41,22 +41,31 @@ const DraftManagement = () => {
 
   // Helpers
   const getStatus = (draft) => {
-    if (draft.isManuallyClosed) return { label: 'Archived', class: 'status-archived' };
-    
+    // Hard overrides: if the Admin manually closed/archived via the toggle button
+    if (draft.status === 'closed')   return { label: 'Closed',   class: 'status-closed' };
+    if (draft.status === 'archived') return { label: 'Archived', class: 'status-archived' };
+
     const now = new Date();
-    const start = new Date(draft.startDate);
-    const end = new Date(draft.endDate);
 
-    // Ensure we are comparing dates correctly
-    end.setHours(23, 59, 59, 999);
+    // Use closed_at (explicit closing date) if present, otherwise fall back to endDate
+    const closingBoundary = draft.closed_at
+      ? new Date(draft.closed_at)
+      : new Date(draft.endDate);
+    closingBoundary.setHours(23, 59, 59, 999);
 
-    if (now < start) {
+    const openBoundary = new Date(draft.startDate);
+
+    if (now < openBoundary) {
       return { label: 'Upcoming', class: 'status-upcoming' };
-    } else if (now >= start && now <= end) {
-      return { label: 'Active', class: 'status-active' };
-    } else {
-      return { label: 'Closed', class: 'status-closed' };
     }
+
+    // Active: status is 'open' in DB AND current date is still within the window
+    if (draft.status === 'open' && now <= closingBoundary) {
+      return { label: 'Active', class: 'status-active' };
+    }
+
+    // Past the closing date regardless of DB status
+    return { label: 'Expired', class: 'status-closed' };
   };
 
   const handleOpenModal = (draft = null) => {
@@ -185,10 +194,18 @@ const DraftManagement = () => {
     e.target.value = null;
   };
 
-  const toggleCloseConsultation = (id) => {
-    setDrafts(drafts.map(d => 
-      d.id === id ? { ...d, isManuallyClosed: !d.isManuallyClosed } : d
-    ));
+  const toggleCloseConsultation = async (id, currentlyClosed) => {
+    const newStatus = currentlyClosed ? 'open' : 'closed';
+    try {
+      await axios.put(`http://localhost:5000/api/admin/update-draft/${id}`, {
+        status: newStatus
+      });
+      // Re-fetch to reflect the persisted change
+      await fetchDrafts();
+    } catch (err) {
+      console.error('Failed to toggle draft status:', err);
+      alert('Could not update draft status. Please try again.');
+    }
   };
 
   const handleViewPdf = (file) => {
@@ -266,11 +283,11 @@ const DraftManagement = () => {
                           <Edit2 size={18} />
                         </button>
                         <button 
-                          className={`btn-icon ${draft.isManuallyClosed ? 'text-success' : 'text-danger'}`} 
-                          onClick={() => toggleCloseConsultation(draft.id)}
-                          title={draft.isManuallyClosed ? "Reopen Consultation" : "Close Consultation"}
+                          className={`btn-icon ${draft.status === 'closed' ? 'text-success' : 'text-danger'}`} 
+                          onClick={() => toggleCloseConsultation(draft.id, draft.status === 'closed')}
+                          title={draft.status === 'closed' ? "Reopen Consultation" : "Close Consultation"}
                         >
-                          {draft.isManuallyClosed ? <CheckCircle size={18} /> : <Archive size={18} />}
+                          {draft.status === 'closed' ? <CheckCircle size={18} /> : <Archive size={18} />}
                         </button>
                       </div>
                     </td>
