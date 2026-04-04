@@ -51,6 +51,8 @@ class Draft(BaseModel):
         description="Status of this draft's consultation window."
     )
     published_date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    startDate: Optional[datetime] = Field(default=None, description="Start date of the consultation window")
+    endDate: Optional[datetime] = Field(default=None, description="End date of the consultation window")
 
 class Comment(BaseModel):
     """

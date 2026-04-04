@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
 const ConsumerHome = ({ onLogout }) => {
+    const navigate = useNavigate();
     const [policies, setPolicies] = useState([]);
     const [loading, setLoading] = useState(true);
     const [selectedPolicy, setSelectedPolicy] = useState(null);
@@ -60,6 +62,11 @@ const ConsumerHome = ({ onLogout }) => {
         setSuccess(false);
     };
 
+    const handleLogoutClick = async () => {
+        if (onLogout) await onLogout();
+        navigate('/');
+    };
+
     return (
         <div className="app-container">
             <header className="top-header">
@@ -69,7 +76,7 @@ const ConsumerHome = ({ onLogout }) => {
                 </div>
                 <div className="admin-profile">
                     <span className="profile-role">Citizen Portal</span>
-                    <button className="back-button" onClick={onLogout}>Logout</button>
+                    <button className="back-button" onClick={handleLogoutClick}>Logout</button>
                 </div>
             </header>
 

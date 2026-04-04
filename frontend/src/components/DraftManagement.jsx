@@ -126,16 +126,21 @@ const DraftManagement = () => {
     }
 
     if (isEditing) {
-      axios.put(`http://localhost:5000/api/admin/update-draft/${currentDraft.id}`, {
-        startDate: formData.startDate,
-        endDate: formData.endDate
-      }).then((res) => {
+      const closingBoundary = new Date(formData.endDate);
+      closingBoundary.setHours(23, 59, 59, 999);
+      const computedStatus = (new Date() > closingBoundary) ? 'closed' : 'open';
+
+      const isoStart = new Date(formData.startDate).toISOString().split('T')[0];
+      const isoEnd = new Date(formData.endDate).toISOString().split('T')[0];
+      const safeId = encodeURIComponent(currentDraft.id);
+      
+      axios.put(`http://localhost:5000/api/admin/update-draft/${safeId}`, {
+        startDate: isoStart,
+        endDate: isoEnd,
+        status: computedStatus
+      }, { withCredentials: true }).then((res) => {
         if (res.status === 200) {
-          setDrafts(drafts.map(d => 
-            d.id === currentDraft.id 
-              ? { ...d, title: formData.title, startDate: formData.startDate, endDate: formData.endDate, file: formData.file || d.file } 
-              : d
-          ));
+          fetchDrafts();
         }
       }).catch(err => setFormError("Failed to save dates in database."));
     } else {

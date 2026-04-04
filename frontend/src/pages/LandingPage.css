@@ -18,7 +18,7 @@
     padding: 1.1rem 2.5rem;
     background: #ffffff;
     border-bottom: 1px solid #e2e8f0;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
     position: sticky;
     top: 0;
     z-index: 100;
@@ -41,7 +41,7 @@
     font-weight: 800;
     font-size: 1.1rem;
     border-radius: 6px;
-    box-shadow: 0 2px 8px rgba(24,100,171,0.3);
+    box-shadow: 0 2px 8px rgba(24, 100, 171, 0.3);
 }
 
 .lp-brand-name {
@@ -130,7 +130,7 @@
     background: #ffffff;
     border: 1.5px solid #e2e8f0;
     border-radius: 14px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
     cursor: pointer;
     text-align: left;
     transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
@@ -160,14 +160,21 @@
 
 .lp-card:hover {
     transform: translateY(-4px);
-    box-shadow: 0 12px 32px rgba(0,0,0,0.12);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
     border-color: transparent;
 }
 
-.lp-card--consumer:hover { box-shadow: 0 12px 32px rgba(43,138,62,0.18); }
-.lp-card--admin:hover    { box-shadow: 0 12px 32px rgba(24,100,171,0.2); }
+.lp-card--consumer:hover {
+    box-shadow: 0 12px 32px rgba(43, 138, 62, 0.18);
+}
 
-.lp-card:hover::before { opacity: 1; }
+.lp-card--admin:hover {
+    box-shadow: 0 12px 32px rgba(24, 100, 171, 0.2);
+}
+
+.lp-card:hover::before {
+    opacity: 1;
+}
 
 .lp-card-icon {
     width: 60px;
@@ -243,7 +250,9 @@
     color: #1864ab;
 }
 
-.lp-card--consumer:hover .lp-card-arrow { color: #2b8a3e; }
+.lp-card--consumer:hover .lp-card-arrow {
+    color: #2b8a3e;
+}
 
 /* ── Stats Strip ── */
 .lp-stats {
@@ -254,7 +263,7 @@
     background: #ffffff;
     border-radius: 12px;
     border: 1px solid #e2e8f0;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
     flex-wrap: wrap;
     justify-content: center;
 }
@@ -312,7 +321,7 @@
 .auth-card {
     background: #ffffff;
     border-radius: 16px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
     border: 1px solid #e2e8f0;
     padding: 2.5rem;
     width: 100%;
@@ -332,7 +341,10 @@
     margin-bottom: 1.5rem;
     transition: color 0.15s;
 }
-.auth-back-btn:hover { color: #1a202c; }
+
+.auth-back-btn:hover {
+    color: #1a202c;
+}
 
 .auth-mode-badge {
     display: inline-block;
@@ -419,7 +431,8 @@
     color: #4a5568;
 }
 
-.auth-input, .auth-select {
+.auth-input,
+.auth-select {
     width: 100%;
     padding: 0.65rem 0.875rem;
     border: 1.5px solid #e2e8f0;
@@ -433,10 +446,11 @@
     font-family: inherit;
 }
 
-.auth-input:focus, .auth-select:focus {
+.auth-input:focus,
+.auth-select:focus {
     border-color: #1864ab;
     background: #ffffff;
-    box-shadow: 0 0 0 3px rgba(24,100,171,0.12);
+    box-shadow: 0 0 0 3px rgba(24, 100, 171, 0.12);
 }
 
 .auth-btn-primary {
@@ -456,9 +470,10 @@
     background: linear-gradient(135deg, #1864ab, #1971c2);
     color: white;
 }
+
 .auth-btn-primary--admin:hover {
     background: linear-gradient(135deg, #155591, #1864ab);
-    box-shadow: 0 4px 12px rgba(24,100,171,0.3);
+    box-shadow: 0 4px 12px rgba(24, 100, 171, 0.3);
     transform: translateY(-1px);
 }
 
@@ -466,9 +481,10 @@
     background: linear-gradient(135deg, #2b8a3e, #37b24d);
     color: white;
 }
+
 .auth-btn-primary--consumer:hover {
     background: linear-gradient(135deg, #1e6e30, #2b8a3e);
-    box-shadow: 0 4px 12px rgba(43,138,62,0.3);
+    box-shadow: 0 4px 12px rgba(43, 138, 62, 0.3);
     transform: translateY(-1px);
 }
 
@@ -515,7 +531,7 @@
 
 .auth-btn-google:hover {
     border-color: #cbd5e0;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     background: #f8fafc;
 }
 

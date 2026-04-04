@@ -580,20 +580,38 @@ def get_all_drafts():
         
     return jsonify(drafts)
 
-@app.route("/api/admin/update-draft/<draft_id>", methods=["PUT", "POST"])
+from dateutil import parser
+
+@app.route("/api/admin/update-draft/<path:draft_id>", methods=["PUT", "POST"])
 def update_draft_dates(draft_id):
     try:
         data = request.json
+        print("Update Request Payload:", data)
         updates = {}
 
         # Handle date updates (optional)
         if data.get('startDate'):
-            updates['startDate'] = datetime.strptime(data['startDate'], '%Y-%m-%d')
+            updates['startDate'] = parser.parse(data['startDate'])
+            if not updates['startDate'].tzinfo:
+                updates['startDate'] = updates['startDate'].replace(tzinfo=timezone.utc)
+                
         if data.get('endDate'):
-            updates['endDate'] = datetime.strptime(data['endDate'], '%Y-%m-%d')
+            end_date = parser.parse(data['endDate'])
+            if not end_date.tzinfo:
+                end_date = end_date.replace(tzinfo=timezone.utc)
+            updates['endDate'] = end_date
+            
+            # Auto-Calculate Status
+            closing_boundary = end_date.replace(hour=23, minute=59, second=59, microsecond=999000)
+            now = datetime.now(timezone.utc)
+            if now > closing_boundary:
+                updates['status'] = 'closed'
+                updates['closed_at'] = now
+            else:
+                updates['status'] = 'open'
 
         # Handle status toggle (open / closed)
-        if 'status' in data:
+        if 'status' in data and not data.get('endDate'):
             updates['status'] = data['status']
 
         if not updates:

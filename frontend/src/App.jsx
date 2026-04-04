@@ -39,6 +39,16 @@ function App() {
   const [selectedPolicy, setSelectedPolicy] = useState(null);
   const [userRole, setUserRole] = useState('user');
 
+  const handleLogout = async () => {
+    try {
+      await axios.post('http://localhost:5000/api/auth/logout');
+    } catch(e) { console.error('Logout error:', e); }
+    setIsAuthenticated(false);
+    setUserRole(null);
+    setNeedsOnboarding(false);
+    navigate('/');
+  };
+
   // URL Path Synchronization
   useEffect(() => {
     const path = location.pathname;
@@ -180,7 +190,7 @@ function App() {
   }
 
   if (userRole === 'consumer') {
-    return <ConsumerHome onLogout={() => window.location.href = 'http://localhost:5000/logout'} />;
+    return <ConsumerHome onLogout={handleLogout} />;
   }
 
   if (loading && !metrics) {
@@ -198,15 +208,7 @@ function App() {
     else navigate(`/admin/${tab}`);
   };
 
-  const handleLogout = async () => {
-    try {
-      await axios.post('http://localhost:5000/api/auth/logout');
-    } catch(e) { console.error('Logout error:', e); }
-    setIsAuthenticated(false);
-    setUserRole('user');
-    setNeedsOnboarding(false);
-    navigate('/');
-  };
+
 
   return (
     <div className="app-container">
