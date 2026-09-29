@@ -1,3 +1,80 @@
+# Avalokan — System Architecture & Interview Q&A
+
+## System Architecture Diagram
+
+```mermaid
+flowchart TD
+    ADMIN[Admin: Govt Officials] -->|HTTPS| FE[Frontend: React 19 SPA - Vite]
+    CONSUMER[Consumer: Citizens / NGOs] -->|HTTPS| FE
+
+    FE -->|REST API| BE[Backend: Flask - app.py]
+    BE -->|RBAC + session auth| BE
+
+    BE -->|CRUD: policies, drafts, comments| DB[(MongoDB\ndatabase.py)]
+    BE -->|invoke on new comment| AI[AI Engine: ai_engine.py\nHuggingFace Transformers]
+    AI -->|sentiment, toxicity, clause summary| BE
+    BE -->|persist AI results| DB
+
+    BE -->|PDF/Excel generation| REPORTS[Report Generation Module]
+    REPORTS -->|file| ADMIN
+```
+
+**Overview:** The React/Vite frontend talks to a Flask REST backend over HTTP for both admin (policy/draft management) and consumer (comment submission) roles, gated by RBAC/session auth. The backend persists the Policy → Draft → Comment hierarchy in MongoDB and calls a dedicated AI Engine (HuggingFace Transformers) for sentiment/toxicity/summarization on submitted comments, writing results back to MongoDB; the backend also generates PDF/Excel reports for admins.
+
+---
+
+## Interview Q&A
+
+**Non-Technical**
+
+1. **What does Avalokan do?**
+   Helps a government ministry (MCA) analyze thousands of public comments on draft policies — sentiment, toxicity, and auto-summaries — instead of reading each manually.
+2. **Who are the users?**
+   Admins (government officials — create policies, manage drafts, view analytics, export reports) and Consumers (citizens/NGOs — submit feedback).
+3. **Why is this useful for policymaking?**
+   Converts unstructured public feedback into structured, actionable insight (sentiment trends, key concerns) at scale.
+4. **What's the data hierarchy?**
+   Policy → Draft (a specific version open for consultation) → Comment (citizen feedback tied to a draft).
+5. **What happens when a policy is revised?**
+   A new Draft is created under the same Policy; new drafts supersede older ones for active consultation.
+
+**Technical**
+
+6. **What's the full stack?**
+   React 19 (Vite) frontend, Flask REST API backend, MongoDB database, separate AI Engine (HuggingFace Transformers).
+7. **Why MongoDB over a relational DB here?**
+   Comments/drafts have variable, nested, evolving structure (metadata, AI analysis fields) — document model fits better than rigid schema; supports flexible aggregation for analytics.
+8. **What are the three main collections?**
+   `policies`, `drafts`, `comments` — with comments referencing their parent draft.
+9. **How does auth/RBAC work?**
+   Allowlist-based Role-Based Access Control with session management in `app.py`; two roles — Admin (full policy/report access) and Consumer (submit + browse only).
+10. **What does the AI Engine actually do?**
+    Runs HuggingFace Transformer models for: sentiment classification, toxicity detection, and hierarchical/clause-wise summarization of comments.
+11. **What is "hierarchical summarization"?**
+    Summarizes feedback at the clause level first, then rolls up into a draft-level summary — preserves which specific clause got which feedback.
+12. **How does frontend talk to backend?**
+    REST API calls (HTTP/JSON) from the React SPA to Flask endpoints.
+13. **How are reports generated?**
+    A dedicated backend module generates PDF/Excel reports (aggregated analytics) for Admins to export.
+14. **What happens step-by-step when a citizen submits a comment?**
+    Frontend → REST POST to backend → backend validates + stores in `comments` collection → backend invokes AI Engine (sentiment/toxicity/summary) → results written back to the comment doc → available in Admin analytics.
+15. **Why decouple the AI Engine from the main backend?**
+    Separation of concerns — heavy ML inference (Transformers) is isolated from the lightweight REST/DB layer, easier to scale/replace independently.
+16. **How is toxicity detection different from sentiment analysis here?**
+    Sentiment = positive/negative/neutral stance; toxicity = flags abusive/harmful language — separate classifiers, both run on the same comment.
+17. **What indexing/aggregation strategy would matter here?**
+    Indexes on `draft_id` in comments (fast lookup per draft) and MongoDB aggregation pipelines for sentiment-distribution analytics per policy/draft.
+18. **Why Vite for the frontend?**
+    Fast dev server + build tool for React — quicker HMR (hot module reload) than older bundlers like CRA/Webpack.
+19. **What's a scalability concern?**
+    Synchronous AI inference inside the comment-submission request could bottleneck under high comment volume — better as an async/background job.
+20. **What would you add next?**
+    Async task queue for AI processing, versioned comment re-analysis on model updates, multi-language sentiment support.
+
+
+==================================================================================================================================================================================================
+
+
 # Avalokan — Data Flow & Control Flow (Beginner's Guide)
 
 ## 1. What is Avalokan, and why does it exist?
@@ -175,6 +252,9 @@ sequenceDiagram
 - **Toxicity detection**: Checking if a comment contains abusive, hateful, or harmful language.
 - **RBAC (Role-Based Access Control)**: A system for deciding what different types of users (citizens vs. officials) are allowed to do.
 - **MongoDB**: A type of database that stores information as flexible documents (like JSON), which is convenient because comments and their AI results can have varying structures.
+
+
+==================================================================================================================================================================================================
 
 
 ## Tech Stack
