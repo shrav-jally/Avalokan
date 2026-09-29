@@ -311,3 +311,284 @@ sequenceDiagram
 | | **Hardware & Credentials**| Optional GPU for faster AI inference, Google OAuth credentials for Google login |
 | **Not Currently Present**| **Missing Capabilities** | TypeScript, Docker configuration, Docker Compose, Automated CI/CD configuration, Backend test suite, Frontend test framework, Production WSGI server such as Gunicorn or Waitress, Explicit Python or Node version files |
 | **Summary** | **In short** | Avalokan is a React/Vite single-page application backed by a Flask REST API, MongoDB, Hugging Face/PyTorch NLP services, Google OAuth, and PDF/Excel reporting tools. |
+
+
+==================================================================================================================================================================================================
+
+
+# 🛠️ My Contributions — Avalokan
+
+![Avalokan](https://img.shields.io/badge/Project-Avalokan-1E90FF?style=for-the-badge) ![Status](https://img.shields.io/badge/Interview-Ready-brightgreen?style=for-the-badge)
+
+## 🔵 Part 2 — Avalokan
+
+### 🎯 The headline answer (what I'd say first)
+
+> *"On Avalokan, I built the **complete website frontend**, **seeded the database and helped design the schema**, and wrote the **logic connecting BERT, VADER, and the summarization models** — so that raw citizen feedback turns into sentiment scores and readable summaries — and then wired those generated summaries into the **reports section** that officials actually see."*
+
+### 📦 Breakdown by contribution area
+
+<table>
+<tr><td>🖥️ <b>Frontend</b></td><td>Full React (Vite) website — citizen feedback forms and the admin-facing views.</td></tr>
+<tr><td>🗄️ <b>Database</b></td><td>Helped design the MongoDB schema (<code>policies</code> → <code>drafts</code> → <code>comments</code>) and seeded it with initial data.</td></tr>
+<tr><td>🤖 <b>AI Logic</b></td><td>Wrote the glue logic connecting BERT + VADER sentiment scoring and the summarization model to real comment data.</td></tr>
+<tr><td>📊 <b>Reports</b></td><td>Connected the generated AI summaries into the report-generation section for admins.</td></tr>
+</table>
+
+---
+
+### 🖥️ Frontend — Detailed Talking Points
+
+> *"I built the whole React frontend — the citizen-facing feedback form and the admin dashboard that shows sentiment breakdowns and summaries."*
+
+<details>
+<summary><b>❓ Why React + Vite for this project?</b></summary>
+
+React gives component reusability for the two very different views (citizen form vs. admin analytics), and Vite gives fast dev-server reloads, which mattered for quick iteration during a hackathon/project timeline.
+</details>
+
+<details>
+<summary><b>❓ What are the main pages/views you built?</b></summary>
+
+A feedback submission form for citizens/NGOs (tied to a specific policy draft), and an admin dashboard showing per-draft sentiment breakdowns, flagged/toxic comments, and generated summaries.
+</details>
+
+<details>
+<summary><b>❓ How does the frontend know which "draft" a comment belongs to?</b></summary>
+
+Each draft has an ID; the feedback form is loaded in the context of a specific draft (e.g., via a route/URL parameter) and submits the comment tagged with that `draft_id`.
+</details>
+
+<details>
+<summary><b>❓ How did you handle state/data fetching in React?</b></summary>
+
+Standard React state/hooks for local UI state, with REST calls to the Flask backend for fetching policies/drafts/comments and posting new feedback.
+</details>
+
+<details>
+<summary><b>❓ What was the trickiest UI piece?</b></summary>
+
+Displaying the hierarchical summary clearly — showing which specific clause of a draft got which sentiment/summary, without overwhelming the admin with raw comment text.
+</details>
+
+<details>
+<summary><b>❓ Did you handle authentication/roles in the frontend?</b></summary>
+
+Yes — the frontend respects the two roles (Admin vs. Consumer) coming from the backend's session/RBAC layer, showing/hiding the analytics and report-generation views accordingly.
+</details>
+
+<details>
+<summary><b>❓ How would you improve the frontend if you had more time?</b></summary>
+
+Add optimistic UI updates on comment submission (so the citizen sees instant feedback instead of waiting on the full AI pipeline), and richer data visualizations (sentiment trend over time, not just a snapshot).
+</details>
+
+---
+
+### 🗄️ Database Design & Seeding — Detailed Talking Points
+
+> *"I helped design the schema around three collections — policies, drafts, and comments — and wrote the seed data so the team had realistic sample data to build and test against from day one."*
+
+<details>
+<summary><b>❓ Why MongoDB instead of a relational database here?</b></summary>
+
+Comments carry variable, evolving structure — raw text plus AI-generated fields (sentiment score, toxicity flag, summary) that can differ or grow over time — a flexible document store fits that better than a rigid predefined schema.
+</details>
+
+<details>
+<summary><b>❓ Describe the three collections and how they relate.</b></summary>
+
+`policies` are the top-level topic; each policy has one or more `drafts` (versions open for consultation); each `draft` has many `comments`, each comment referencing its parent draft's ID.
+</details>
+
+<details>
+<summary><b>❓ What fields does a comment document actually have?</b></summary>
+
+Raw text, submitter info, timestamp, draft reference, plus AI-added fields: sentiment label/score, toxicity flag, and summary — the AI fields get written back onto the same document after processing.
+</details>
+
+<details>
+<summary><b>❓ Why did seeding the database matter?</b></summary>
+
+Without realistic seed data (sample policies, drafts, and a spread of comments with varied sentiment), the frontend and AI integration couldn't be properly tested end-to-end before real citizen data existed.
+</details>
+
+<details>
+<summary><b>❓ What did you seed, specifically?</b></summary>
+
+*(Answer with your real specifics — e.g.: sample policy documents, a few draft versions per policy, and a batch of realistic comments spanning positive/negative/neutral/toxic examples to stress-test the AI pipeline and dashboard views.)*
+</details>
+
+<details>
+<summary><b>❓ How would you index this for performance at scale?</b></summary>
+
+Index `draft_id` on the comments collection (since every dashboard query filters by draft), and consider a compound index on `draft_id` + sentiment label for fast aggregate breakdowns.
+</details>
+
+<details>
+<summary><b>❓ What's a schema design trade-off you made?</b></summary>
+
+Storing AI results directly on the comment document (rather than in a separate collection) — simpler to query and display per comment, at the cost of the comment document growing larger and needing re-writes if a model is re-run later.
+</details>
+
+---
+
+### 🤖 BERT + VADER + Summarization Logic — Detailed Talking Points
+
+> *"This was my core AI-integration piece — taking the raw comment text and running it through BERT for contextual sentiment, VADER as a fast secondary/lexicon-based score, and a summarization step, then writing all of that back onto the comment record."*
+
+<details>
+<summary><b>❓ Why use both BERT and VADER instead of just one?</b></summary>
+
+BERT understands context and domain jargon much better (important for legal/policy language), while VADER is lightweight, fast, and good at short, punctuation/emoji-heavy text — using both gives a context-aware score plus a fast sanity-check/secondary signal.
+</details>
+
+<details>
+<summary><b>❓ How do you reconcile it if BERT and VADER disagree on a comment's sentiment?</b></summary>
+
+*(Answer based on your actual logic — e.g.: BERT's contextual score is treated as primary since it's fine-tuned on domain data, and VADER's score is surfaced as a secondary signal/sanity check rather than overriding it, or you took a weighted combination — describe whichever you implemented.)*
+</details>
+
+<details>
+<summary><b>❓ What does "fine-tuned" mean for the BERT model here, concretely?</b></summary>
+
+The base BERT model's weights were further trained on labeled policy-feedback examples so it learns domain-specific vocabulary and phrasing, rather than relying only on its generic pretraining.
+</details>
+
+<details>
+<summary><b>❓ Walk me through the logic pipeline for one incoming comment.</b></summary>
+
+1. Comment text arrives at the backend.
+2. Backend calls my sentiment logic, which tokenizes the text and runs it through the fine-tuned BERT model for a contextual sentiment label/score.
+3. VADER independently scores the same text using its lexicon/rule approach.
+4. A toxicity check runs alongside.
+5. The summarization step condenses the comment (working at clause level for longer text) into a short summary.
+6. All of these results get written back onto the comment document in MongoDB.
+</details>
+
+<details>
+<summary><b>❓ How does "batched tokenization" work and why does it matter?</b></summary>
+
+Instead of running the model once per comment, multiple comments are tokenized and passed through the model together as a batch — this is significantly faster on the same hardware than looping one comment at a time, since it makes better use of parallel computation.
+</details>
+
+<details>
+<summary><b>❓ What does "drift monitoring" mean and how would you implement it here?</b></summary>
+
+Tracking whether the distribution of incoming comment language/sentiment shifts meaningfully over time (e.g., new policy topics introducing vocabulary the model wasn't trained on) — implemented by periodically comparing recent prediction confidence/distribution against a baseline, flagging when accuracy might be degrading and retraining is needed.
+</details>
+
+<details>
+<summary><b>❓ How did you connect the AI models to the actual application (not just run them standalone)?</b></summary>
+
+I wrote the integration logic that takes a comment straight from the database/API request, prepares it for each model (tokenization, formatting), calls the models, and maps their raw outputs into the clean fields (`sentiment`, `toxicity_flag`, `summary`) stored back on the comment record.
+</details>
+
+<details>
+<summary><b>❓ What happens if the AI step fails or times out for a comment?</b></summary>
+
+The raw comment is already saved before AI processing runs, so citizen feedback is never lost even if the model call fails — the comment can be marked for retry rather than blocking the citizen's submission.
+</details>
+
+<details>
+<summary><b>❓ Why summarize at the "clause level" instead of the whole comment at once?</b></summary>
+
+Long feedback often reacts to multiple different clauses of a draft policy — summarizing per clause keeps that context, so admins can see which specific clause each summary point relates to, instead of one blended summary losing that mapping.
+</details>
+
+<details>
+<summary><b>❓ How would you evaluate whether your sentiment logic is actually accurate?</b></summary>
+
+Compare model predictions against a manually labeled validation set of comments and compute accuracy/precision/recall per sentiment class, paying particular attention to domain jargon cases where generic models tend to fail.
+</details>
+
+<details>
+<summary><b>❓ What's a limitation of your current AI logic pipeline?</b></summary>
+
+It runs synchronously as part of the comment-submission request in the current design, which could become a bottleneck under high comment volume — a background job queue would be a natural next step.
+</details>
+
+---
+
+### 📊 Connecting Summaries to Reports — Detailed Talking Points
+
+> *"Once comments had sentiment and summary data attached, I built the logic that pulls that data into the reports section — so an official could generate a PDF/Excel report showing aggregated sentiment and the AI-generated summaries per draft, not just raw comment dumps."*
+
+<details>
+<summary><b>❓ What exactly goes into a generated report?</b></summary>
+
+Aggregated sentiment breakdown (e.g., % positive/negative/neutral) per draft, flagged/toxic comment counts, and the AI-generated clause-level summaries — giving an official a full picture without reading every comment.
+</details>
+
+<details>
+<summary><b>❓ How did you pull the summaries into the report generator technically?</b></summary>
+
+The report module queries the comments collection for a given draft, reads the already-computed `summary` and `sentiment` fields off each comment (since they're precomputed and stored, not recalculated on the fly), and aggregates/formats them into the output document.
+</details>
+
+<details>
+<summary><b>❓ Why store summaries on the comment rather than compute them fresh every time a report is generated?</b></summary>
+
+Precomputing avoids re-running expensive model inference every time someone wants a report — reports can be generated instantly from already-processed data instead of waiting on the AI pipeline again.
+</details>
+
+<details>
+<summary><b>❓ What format(s) can reports be exported in?</b></summary>
+
+PDF and Excel — giving officials both a shareable/readable format and a format they can further analyze or filter in a spreadsheet.
+</details>
+
+<details>
+<summary><b>❓ How would reports need to change if a comment's AI analysis were updated/re-run later (e.g., a model upgrade)?</b></summary>
+
+The stored `summary`/`sentiment` fields on the comment would need to be refreshed, and any previously generated reports would reflect the older analysis unless regenerated — a versioning strategy on AI results would help track this cleanly.
+</details>
+
+<details>
+<summary><b>❓ What was the hardest part of wiring summaries into reports?</b></summary>
+
+Keeping the clause-level granularity intact through aggregation — it's easy to accidentally flatten everything into one generic summary, losing the "which clause got which feedback" detail that makes the report actually useful to policymakers.
+</details>
+
+---
+
+### 🌐 Cross-cutting Avalokan questions
+
+<details>
+<summary><b>❓ Of everything you built, what are you most proud of and why?</b></summary>
+
+Connecting the AI layer (BERT/VADER/summarization) all the way through to the reports section — it's the piece that actually turns "we ran some ML models" into a usable end product an official can act on.
+</details>
+
+<details>
+<summary><b>❓ What was the biggest bug or issue you personally hit?</b></summary>
+
+*(Have a real, specific one ready — e.g., an early version double-counted sentiment because both BERT and VADER results were briefly stored under the same field name, silently overwriting one another; fixed by giving each model its own explicit field.)*
+</details>
+
+<details>
+<summary><b>❓ Which part of Avalokan did you NOT build?</b></summary>
+
+The Flask backend's core REST API structure and RBAC/session auth layer were built by teammates — I focused on the frontend, DB schema/seeding, the AI-model integration logic, and wiring that into reports.
+</details>
+
+<details>
+<summary><b>❓ How did your piece depend on teammates' work, and vice versa?</b></summary>
+
+My AI integration logic needed the backend's comment-submission endpoint and MongoDB connection already in place to have somewhere to write results, and the reports module I connected needed the backend's report-generation scaffolding to exist first.
+</details>
+
+<details>
+<summary><b>❓ If you had to explain your contribution in one sentence to a non-technical interviewer?</b></summary>
+
+"I built the website people actually see and use, made sure the data behind it was structured and populated correctly, and made the AI 'understand' feedback and hand that understanding straight into the reports officials read."
+</details>
+
+---
+
+### ✅ Prep checklist before the interview
+
+- [ ] Fill in the two "have a real bug ready" placeholders above with your actual debugging story.
+- [ ] Fill in the "what did you seed, specifically" answer with real sample data details.
+- [ ] Confirm the BERT-vs-VADER reconciliation logic matches what you actually implemented.
+- [ ] Practice saying the headline answer for each project out loud, twice, without reading it.
